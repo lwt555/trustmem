@@ -74,14 +74,19 @@ class ClaudeEmbeddingBackend(EmbeddingBackend):
 
 
 class OpenAIEmbeddingBackend(EmbeddingBackend):
-    """Embedding backend using OpenAI Embeddings API."""
+    """Embedding backend using OpenAI-compatible Embeddings API."""
 
-    def __init__(self, model: str = "text-embedding-3-small") -> None:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
+    def __init__(self, model: str = "text-embedding-3-small",
+                 base_url: str | None = None,
+                 api_key_env: str = "OPENAI_API_KEY") -> None:
+        api_key = os.environ.get(api_key_env, "")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
+            raise ValueError(f"{api_key_env} environment variable not set")
         import openai
-        self._client = openai.OpenAI(api_key=api_key)
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**kwargs)
         self._model = model
         self._dim = 1536  # text-embedding-3-small dimension
 
@@ -98,11 +103,56 @@ class OpenAIEmbeddingBackend(EmbeddingBackend):
         return self._dim
 
 
+class BGEEmbeddingBackend(EmbeddingBackend):
+    """Local BGE model for Chinese-optimized embeddings via sentence-transformers.
+
+    Uses BAAI/bge-small-zh-v1.5 (512-dim) by default. Set TRUSTMEM_EMBEDDING_MODEL
+    to use a different model. Set HF_ENDPOINT for Chinese users (hf-mirror.com).
+    """
+
+    def __init__(self, model_name: str | None = None) -> None:
+        from sentence_transformers import SentenceTransformer
+        self._model_name = model_name or os.environ.get(
+            "TRUSTMEM_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+        self._model = SentenceTransformer(self._model_name)
+        self._dim = self._model.get_sentence_embedding_dimension()
+
+    def embed(self, text: str) -> list[float]:
+        return self._model.encode(text, normalize_embeddings=True).tolist()
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        embeddings = self._model.encode(texts, normalize_embeddings=True)
+        return [e.tolist() for e in embeddings]
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
+
+
 def create_embedding_backend() -> EmbeddingBackend:
     backend_name = os.environ.get("TRUSTMEM_LLM_BACKEND", "claude").lower()
+    embedding_override = os.environ.get("TRUSTMEM_EMBEDDING_BACKEND", "").lower()
+
+    # explicit override takes priority
+    if embedding_override:
+        return _make_embedding_backend(embedding_override)
+
+    # pair with LLM backend: deepseek → bge (local Chinese embedding)
+    if backend_name == "deepseek":
+        try:
+            return BGEEmbeddingBackend()
+        except (ImportError, Exception):
+            return StubEmbeddingBackend(dimension=512)
+
+    return _make_embedding_backend(backend_name)
+
+
+def _make_embedding_backend(name: str) -> EmbeddingBackend:
     try:
-        if backend_name == "openai":
+        if name == "openai":
             return OpenAIEmbeddingBackend()
+        elif name == "bge":
+            return BGEEmbeddingBackend()
         else:
             return ClaudeEmbeddingBackend()
     except (ValueError, ImportError):
