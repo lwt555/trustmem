@@ -11,7 +11,8 @@ def create_llm_backend() -> LLMBackend:
 
     TRUSTMEM_LLM_BACKEND:
         claude  (default) — Anthropic Claude API
-        openai             — OpenAI API
+        openai             — OpenAI API (GPT-4o)
+        deepseek           — DeepSeek API (deepseek-v4-pro)
         ollama             — Local Ollama
 
     TRUSTMEM_DEMO_MODE=1 wraps the backend in DemoCache.
@@ -28,6 +29,13 @@ def create_llm_backend() -> LLMBackend:
         if backend_name == "openai":
             from .openai import OpenAIBackend
             backend = OpenAIBackend()
+        elif backend_name == "deepseek":
+            from .openai import OpenAIBackend
+            backend = OpenAIBackend(
+                model="deepseek-v4-pro",
+                base_url="https://api.deepseek.com",
+                api_key_env="DEEPSEEK_API_KEY",
+            )
         elif backend_name == "ollama":
             from .ollama import OllamaBackend
             backend = OllamaBackend()

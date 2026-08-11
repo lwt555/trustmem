@@ -36,14 +36,19 @@ def _from_openai_tool_calls(raw_calls) -> list[LLMToolCall]:
 
 
 class OpenAIBackend:
-    """LLM backend backed by OpenAI API (GPT-4o, etc.)."""
+    """LLM backend backed by OpenAI-compatible API (GPT-4o, DeepSeek, etc.)."""
 
-    def __init__(self, model: str = "gpt-4o") -> None:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
+    def __init__(self, model: str = "gpt-4o",
+                 base_url: str | None = None,
+                 api_key_env: str = "OPENAI_API_KEY") -> None:
+        api_key = os.environ.get(api_key_env, "")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
+            raise ValueError(f"{api_key_env} environment variable not set")
         import openai
-        self._client = openai.OpenAI(api_key=api_key)
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**kwargs)
         self._model = model
 
     def chat(
