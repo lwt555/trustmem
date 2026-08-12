@@ -202,6 +202,7 @@ class TaskScope:
     t_ctx_min: Trust
     ingest: IngestMode = IngestMode.LEARN
     scope_hash: str = ""
+    parent_hash: str = ""
 
     def __post_init__(self) -> None:
         if not self.scope_hash:
@@ -214,34 +215,28 @@ class TaskScope:
             "c_ctx_max": int(self.c_ctx_max),
             "t_ctx_min": int(self.t_ctx_min),
             "ingest": self.ingest.value,
+            "parent_hash": self.parent_hash,
         }, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
-    def widen(self, new_c_max: Clearance, new_t_min: Trust,
-              claimed_hash: str) -> "TaskScope":
-        """扩展任务区间。claim_hash 必须匹配当前 scope_hash，否则拒绝扩展。
+    def widen(self, *args, **kwargs) -> "TaskScope":
+        """任务区间只可收紧（I13）。放宽必须重新签发清单并重新上链承诺。"""
+        raise PermissionError(
+            "I13: 任务区间只可收紧。放宽必须重新签发清单并重新上链承诺。")
 
-        §4 第 6 项抽查：区间防篡改 — 攻击者注入"本任务也允许写外部"无法生效，
-        因为 hash 不匹配会直接抛异常。
-        """
-        if claimed_hash != self.scope_hash:
-            raise ValueError(
-                f"Scope hash mismatch: claimed={claimed_hash[:8]}..., "
-                f"actual={self.scope_hash}. 区间防篡改: 拒绝扩展。")
-        if new_c_max < self.c_ctx_max:
-            raise ValueError(
-                f"widen c_ctx_max must expand, not shrink: "
-                f"{fmt(new_c_max)} < {fmt(self.c_ctx_max)}")
-        if new_t_min > self.t_ctx_min:
-            raise ValueError(
-                f"widen t_ctx_min must expand, not shrink: "
-                f"{fmt(new_t_min)} > {fmt(self.t_ctx_min)}")
-        return TaskScope(
-            task_id=self.task_id,
-            c_ctx_max=new_c_max,
-            t_ctx_min=new_t_min,
-            ingest=self.ingest,
-        )
+    def narrow(self, new_c_max: Clearance, new_t_min: Trust) -> "TaskScope":
+        """收紧任务区间（I13）。只能把 c_ctx_max 调小、t_ctx_min 调大。"""
+        if new_c_max > self.c_ctx_max:
+            raise PermissionError(
+                f"I13: narrow 只能收紧，c_ctx_max 不得增大: "
+                f"{fmt(new_c_max)} > {fmt(self.c_ctx_max)}")
+        if new_t_min < self.t_ctx_min:
+            raise PermissionError(
+                f"I13: narrow 只能收紧，t_ctx_min 不得降低: "
+                f"{fmt(new_t_min)} < {fmt(self.t_ctx_min)}")
+        from dataclasses import replace
+        return replace(self, c_ctx_max=new_c_max, t_ctx_min=new_t_min,
+                       parent_hash=self.scope_hash, scope_hash="")
 
     def contains_c(self, sensitivity: Clearance) -> bool:
         return sensitivity <= self.c_ctx_max

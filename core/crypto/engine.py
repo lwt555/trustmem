@@ -22,6 +22,7 @@ from core.topology import Topology
 from .abe import (
     ABEMasterKey, ABEPublicKey, ABEAttributeKey, Ciphertext,
     abe_setup, abe_issue_key, abe_encrypt, abe_decrypt, policy_satisfied,
+    ENFORCEMENT,
 )
 from .ckks import (
     CKKSContext, CKKSEncryptedVector,
@@ -231,4 +232,5 @@ class CryptoEngine:
             "ckks_context_id": ctx_id(self.ckks_ctx),
             "total_decrypts": len(self._decrypt_log),
             "total_searches": len(self._search_log),
+            "abe_enforcement": ENFORCEMENT,
         }

@@ -48,6 +48,9 @@ class EventType(str, Enum):
     DECLASSIFY = "DECLASSIFY"
     CONSULT = "CONSULT"
     EPOCH_CHANGE = "EPOCH_CHANGE"
+    TRUST_UPGRADE = "TRUST_UPGRADE"
+    MANIFEST_COMMIT = "MANIFEST_COMMIT"
+    SIGNKEY_BIND = "SIGNKEY_BIND"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -360,6 +363,18 @@ class MerkleStore:
         if not block:
             return False
         return block.verify_event(event_id)
+
+    def events_by_type(self, event_type: EventType) -> list[AuditEvent]:
+        """返回某类型的所有事件（含已提交块与待提交 pending）。"""
+        out: list[AuditEvent] = []
+        for block in self._blocks.values():
+            for e in block.events:
+                if e.event_type == event_type:
+                    out.append(e)
+        for e in self._pending:
+            if e.event_type == event_type:
+                out.append(e)
+        return out
 
     # ── Session replay ──────────────────────────────────────────
 

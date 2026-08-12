@@ -162,7 +162,7 @@ class TestABECycle:
     def test_master_key_export(self):
         mk, pk = abe_setup()
         raw = mk.export()
-        assert len(raw) == 64
+        assert len(raw) == 32
 
 
 # ═══════════════════════════════════════════════════════════

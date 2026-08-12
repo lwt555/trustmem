@@ -1,6 +1,8 @@
 """§4 抽查补齐：委派继承、区间防篡改、budget 序列、declassify + NoWriteDown"""
 from __future__ import annotations
 
+import pytest
+
 from core.labels import (AgentLabel, Trust, Role, Clearance, Layer,
                          MemoryType, MemoryLabel, WriteOp, IngestMode, TaskScope)
 from core.session import Session, SessionStore, AbsorbMode
@@ -69,42 +71,29 @@ def test_s4_5_delegate_inherits_consulted():
 # §4 #6: 区间防篡改 — widen() 必须 hash-verified
 # ══════════════════════════════════════════════════════════════
 def test_s4_6_widen_hash_protection():
-    """widen() 用正确 hash → 成功；用错误 hash → 抛异常；缩小区间 → 抛异常."""
+    """I13：任务区间只可收紧。widen() 无条件抛异常，无论 hash 对错。"""
     scope = TaskScope(task_id="task_x", c_ctx_max=Clearance.L1_INTERNAL,
                       t_ctx_min=Trust.T1_LOW)
     real_hash = scope.scope_hash
     assert real_hash, "TaskScope 必须有 scope_hash"
 
-    # 正确 hash → 扩展成功
-    wider = scope.widen(Clearance.L2_SENSITIVE, Trust.T0_UNTRUSTED, real_hash)
-    assert wider.c_ctx_max == Clearance.L2_SENSITIVE
-    assert wider.t_ctx_min == Trust.T0_UNTRUSTED
-    print(f"  #6a: widen with correct hash OK — c_max L1→L2, t_min T1→T0")
+    # I13: 放宽必须重新签发清单并重新上链承诺 —— widen 一律拒绝，含正确 hash
+    with pytest.raises(PermissionError):
+        scope.widen(Clearance.L2_SENSITIVE, Trust.T0_UNTRUSTED, real_hash)
+    print(f"  #6a: widen with correct hash rejected (I13)")
 
-    # 错误 hash → 抛异常
-    try:
+    with pytest.raises(PermissionError):
         scope.widen(Clearance.L2_SENSITIVE, Trust.T0_UNTRUSTED,
                     claimed_hash="deadbeef00000000")
-        assert False, "错误 hash 未拒绝"
-    except ValueError as e:
-        assert "hash mismatch" in str(e).lower(), f"期望 hash mismatch，实际: {e}"
-    print(f"  #6b: wrong hash rejected")
+    print(f"  #6b: widen with wrong hash rejected (I13)")
 
-    # 缩小 c_ctx_max → 抛异常
-    try:
+    with pytest.raises(PermissionError):
         scope.widen(Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED, real_hash)
-        assert False, "缩小 c_ctx_max 未拒绝"
-    except ValueError as e:
-        pass
-    print(f"  #6c: shrink c_ctx_max rejected")
+    print(f"  #6c: widen (shrink c) rejected (I13)")
 
-    # 缩小 t_ctx_min（即提高门槛）→ 抛异常
-    try:
+    with pytest.raises(PermissionError):
         scope.widen(Clearance.L2_SENSITIVE, Trust.T2_MEDIUM, real_hash)
-        assert False, "缩小 t_ctx_min 未拒绝"
-    except ValueError as e:
-        pass
-    print(f"  #6d: shrink t_ctx_min rejected")
+    print(f"  #6d: widen (raise t) rejected (I13)")
 
 
 # ══════════════════════════════════════════════════════════════

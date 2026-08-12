@@ -183,12 +183,23 @@ class WritePipeline:
         schema_ok: bool | None = None,
         ttl_end: datetime | None = None,
         scope: TaskScope | None = None,
+        anchor: object | None = None,
     ) -> WriteResult:
         """Execute the full write pipeline."""
         side_effects: list[str] = []
         input_mems = input_mems or []
         input_texts = input_texts or [m.chunk_id for m in input_mems]
         task = task_binding or session.task_id
+
+        # 0. TaskScope 上链承诺校验（F-09）
+        if anchor is not None and scope is not None:
+            from .task_scope import verify_scope_against_chain
+            if not verify_scope_against_chain(scope, anchor):
+                decision = Decision(Verdict.DENY, "WRITE", agent.agent_id, task, [],
+                                    denied_by="ScopeCommitMismatch")
+                self.audit.log(decision)
+                return WriteResult(allowed=False, decision=decision,
+                                   denied_by="ScopeCommitMismatch")
 
         # 1. PDP decision
         decision, decay = self.pdp.can_write(
@@ -321,9 +332,20 @@ class ReadPipeline:
         now: datetime | None = None,
         epoch_current: int | None = None,
         scope: TaskScope | None = None,
+        anchor: object | None = None,
     ) -> ReadResult:
         """Execute the full read pipeline with HIDE support."""
         side_effects: list[str] = []
+
+        # 0. TaskScope 上链承诺校验（F-09）：scope 与链上 MANIFEST_COMMIT 不符 → 全 DENY
+        if anchor is not None and scope is not None:
+            from .task_scope import verify_scope_against_chain
+            if not verify_scope_against_chain(scope, anchor):
+                decision = Decision(Verdict.DENY, "READ", agent.agent_id, chunk_id, [],
+                                    denied_by="ScopeCommitMismatch")
+                self.audit.log(decision)
+                return ReadResult(allowed=False, decision=decision,
+                                  denied_by="ScopeCommitMismatch")
 
         # 1. Fetch memory from store
         mem = self.mem_store.get(chunk_id)
