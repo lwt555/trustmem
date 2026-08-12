@@ -1,9 +1,12 @@
 """FAISS index wrapper for vector storage and similarity search."""
 from __future__ import annotations
 
+import logging
 import os
 import pickle
 from dataclasses import dataclass
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -78,7 +81,8 @@ class FAISSIndex:
                         hits.append(SearchHit(cid, float(score)))
                 return hits
             except Exception:
-                pass
+                _log.debug("FAISS search failed, falling back to brute-force",
+                          exc_info=True)
 
         return self._brute_force(query_embedding, top_k)
 
@@ -113,6 +117,11 @@ class FAISSIndex:
         self._chunk_to_id = data["chunk_to_id"]
         self._vectors = data["vectors"]
         self._init_faiss()
+        if self._index is not None:
+            import numpy as np
+            for idx in sorted(self._vectors.keys()):
+                vec_arr = np.array([self._vectors[idx]], dtype=np.float32)
+                self._index.add(vec_arr)
 
     @property
     def size(self) -> int:

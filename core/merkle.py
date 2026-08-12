@@ -445,18 +445,29 @@ class MerkleStore:
 # ──────────────────────────────────────────────────────────────
 
 # Event type mapping: (action, is_allowed, denied_by) → EventType
+# INVOKE actions are handled first in _decision_to_event_type, so tool-related
+# denied_by values ("ProvenanceTrust", "ToolScope", "HumanInTheLoop") are
+# not needed here.
 _EVENT_MAP: dict[tuple[str, bool, str | None], EventType] = {
+    # ── WRITE ──
     ("WRITE", True, None): EventType.WRITE_ALLOW,
     ("WRITE", False, "BLP-Star"): EventType.WRITE_DENY,
+    ("WRITE", False, "Biba-Star"): EventType.WRITE_DENY,
+    ("WRITE", False, "LayerWrite"): EventType.WRITE_DENY,
     ("WRITE", False, "Provenance-NoConsult"): EventType.WRITE_DENY,
-    ("WRITE", False, "Provenance-Trust"): EventType.WRITE_DENY,
+    ("WRITE", False, "TaskScope-C"): EventType.WRITE_DENY,
+    ("WRITE", False, "TaskScope-T"): EventType.WRITE_DENY,
+    # ── READ ──
     ("READ", True, None): EventType.READ_ALLOW,
     ("READ", False, "BLP-SimpleSecurity"): EventType.READ_HIDE,
+    ("READ", False, "TaskScope-C"): EventType.READ_HIDE,
     ("READ", False, "NeedToKnow"): EventType.READ_DENY,
+    ("READ", False, "CognitiveLayer"): EventType.READ_DENY,
     ("READ", False, "TTL"): EventType.READ_DENY,
     ("READ", False, "Epoch"): EventType.READ_DENY,
     ("READ", False, "Lifecycle"): EventType.READ_DENY,
-    ("READ", False, "CognitiveLayer"): EventType.READ_DENY,
+    ("READ", False, "TaskScope-T"): EventType.READ_DENY,
+    ("READ", False, "NotFound"): EventType.READ_DENY,
 }
 
 

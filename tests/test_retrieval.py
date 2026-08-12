@@ -92,6 +92,24 @@ class TestFAISSIndex:
         hits = index2.search(emb.embed("hello"), top_k=1)
         assert hits[0].chunk_id == "a"
 
+    def test_save_load_rebuilds_faiss_index(self, index, emb, tmp_path):
+        """After load(), FAISS index is populated, not just in-memory vectors."""
+        index.add("a", emb.embed("hello"))
+        index.add("b", emb.embed("world"))
+        path = str(tmp_path / "faiss2.pkl")
+        index.save(path)
+
+        index2 = FAISSIndex(dimension=128)
+        index2.load(path)
+        assert index2.size == 2
+        # FAISS index must be populated after load
+        if index2._index is not None:
+            assert index2._index.ntotal == 2, (
+                f"FAISS index ntotal={index2._index.ntotal}, expected 2 after load"
+            )
+        hits = index2.search(emb.embed("hello"), top_k=2)
+        assert len(hits) == 2
+
     def test_brute_force_fallback(self, emb):
         """Test works even without faiss installed."""
         idx = FAISSIndex(dimension=128)
