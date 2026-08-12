@@ -245,6 +245,10 @@ class TaskScope:
     def contains_t(self, trust: Trust) -> bool:
         return trust >= self.t_ctx_min
 
+    def is_subscope_of(self, other: "TaskScope") -> bool:
+        """self ⊑ other：c 区间不更宽、t 区间不更松（TR15 子任务只能更紧）。"""
+        return self.c_ctx_max <= other.c_ctx_max and self.t_ctx_min >= other.t_ctx_min
+
     def contains(self, sensitivity: Clearance, trust: Trust) -> bool:
         return self.contains_c(sensitivity) and self.contains_t(trust)
 

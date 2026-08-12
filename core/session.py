@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum
 from typing import ClassVar
 
-from .labels import AgentLabel, Trust, Clearance
+from .labels import AgentLabel, Trust, Clearance, IngestMode, TaskScope
 from .trust_rules import trust_rule
 
 
@@ -188,12 +188,25 @@ class SessionStore:
                 change="t_eff_child ← min(t_eff_parent, t_intrinsic_child)；区间只能更紧",
                 basis="委派继承只紧不松（§3.6）")
     def delegate(self, parent_session_id: str, agent: "AgentLabel",
-                 child_task_id: str, child_session_id: str | None = None) -> "Session":
+                 child_task_id: str, child_session_id: str | None = None,
+                 *, parent_scope: TaskScope | None = None,
+                 child_scope: TaskScope | None = None) -> "Session":
         """创建子会话，继承父会话的 consulted、容量预算和水位。
 
+        铁律（F-20）：
+          - TaskScope_child ⊑ TaskScope_parent（只能更紧）
+          - LEARN → CONSULT 可，反向不可
+          - t_eff_child = min(t_eff_parent, t_intrinsic_child)
         父会话查找使用 all_of() 而非 _s.get((sid, aid))，确保不因 AgentLabel
         实例不同而静默跳过继承。
         """
+        if parent_scope is not None and child_scope is not None:
+            if not child_scope.is_subscope_of(parent_scope):
+                raise PermissionError("TR15: 子任务区间只能更紧")
+            if (parent_scope.ingest is IngestMode.CONSULT
+                    and child_scope.ingest is IngestMode.LEARN):
+                raise PermissionError("TR15: CONSULT → LEARN 反向不可")
+
         child_sid = child_session_id or f"{parent_session_id}/{child_task_id}"
         sess = self.get_or_start(child_sid, agent, child_task_id)
 
@@ -205,8 +218,8 @@ class SessionStore:
         if parent is not None:
             sess.consulted = set(parent.consulted)
             sess.c_eff = parent.c_eff
-            sess.t_eff = parent.t_eff
-            sess.t_eff_ctl = parent.t_eff_ctl
+            sess.t_eff = Trust(min(int(parent.t_eff), int(agent.trust_intrinsic)))
+            sess.t_eff_ctl = Trust(min(int(parent.t_eff_ctl), int(agent.trust_intrinsic)))
             sess.capacity_used_bits = parent.capacity_used_bits
 
         return sess
