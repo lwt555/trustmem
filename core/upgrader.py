@@ -104,13 +104,16 @@ class Upgrader:
         before = mem.provenance_trust
 
         if ev.etype == EvidenceType.HUMAN:
+            # F-14：人工确认必须密码学验签，sig_verifier 缺失即拒绝。
+            # 任意非空字符串不得直升 T3（旧实现的可自证漏洞）。
+            if sig_verifier is None:
+                return UpgradeResult(False, before, before,
+                                     "人工确认必须验签（sig_verifier 缺失）")
             if not ev.human_signature:
                 return UpgradeResult(False, before, before, "人工确认缺少签名")
-            # 如提供签名验证器，执行密码学验证
-            if sig_verifier is not None:
-                if not sig_verifier(ev.human_signature, mem.chunk_id):
-                    return UpgradeResult(False, before, before,
-                                         "人工签名密码学验证失败")
+            if not sig_verifier(ev.human_signature, mem.chunk_id):
+                return UpgradeResult(False, before, before,
+                                     "人工签名密码学验证失败")
             after = Trust.T3_HIGH
 
         elif ev.etype == EvidenceType.CROSS_SOURCE:

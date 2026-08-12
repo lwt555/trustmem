@@ -56,7 +56,7 @@ TrustMem 的可信流转建立在两条偏序格上：
 | ID | 触发事件 | 变化 | 依据 | 代码位置 |
 |---|---|---|---|---|
 | TR15 | 委派创建子会话（跨主体边界） | t_eff_child ← min(t_eff_parent, t_intrinsic_child)；区间只能更紧 | 委派继承只紧不松（§3.6） | `core/session.py:185` |
-| TR16 | 记忆跨主体传播（写入即定标） | provenance_trust 钉死在写时衰减值，不随写者固有可信度重置 | 跨主体边界复合（A 组读入 + B 组写出在边界上复合） | `core/pipeline.py:167` |
+| TR16 | 记忆跨主体传播（写入即定标） | provenance_trust 钉死在写时衰减值，不随写者固有可信度重置 | 跨主体边界复合（A 组读入 + B 组写出在边界上复合） | `core/pipeline.py:169` |
 
 ---
 

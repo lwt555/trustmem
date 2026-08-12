@@ -40,6 +40,12 @@ htmlcov/
 
 # Misc
 *.log
+
+# Signing keys (F-14): 私钥绝不进版本库（公钥 keyring.json 例外）
+keys/*
+!keys/keyring.json
+!keys/.gitkeep
+
 .claude/plans/
 .scratch/
 *.db

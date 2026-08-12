@@ -155,12 +155,14 @@ class WritePipeline:
     def __init__(self, pdp: PDP, crypto: CryptoEngineProto,
                  mem_store: MemoryStoreProto,
                  audit_store: AuditStoreProto,
-                 prov_store: ProvenanceStoreProto) -> None:
+                 prov_store: ProvenanceStoreProto,
+                 signer: object | None = None) -> None:
         self.pdp = pdp
         self.crypto = crypto
         self.mem_store = mem_store
         self.audit = audit_store
         self.prov = prov_store
+        self.signer = signer
 
     # ── Write ─────────────────────────────────────────────────
 
@@ -257,8 +259,13 @@ class WritePipeline:
         ct = self.crypto.encrypt_memory(content, mem)
         side_effects.append(f"CP-ABE encrypted under label policy")
 
-        # 6. Persist memory + ciphertext (F-12: 密文落库，不许只存标签)
+        # 5.5. Sign metadata + ciphertext digest (F-14: 写入不可抵赖)
         ct_bytes = ct.to_bytes() if hasattr(ct, "to_bytes") else ct
+        if self.signer is not None:
+            self.signer.sign(mem, ct_bytes)
+            side_effects.append(f"Signed by {mem.owner_agent} (ECDSA)")
+
+        # 6. Persist memory + ciphertext (F-12: 密文落库，不许只存标签)
         try:
             self.mem_store.put(mem, ct_bytes)
         except TypeError:
@@ -315,7 +322,8 @@ class ReadPipeline:
                  mem_store: MemoryStoreProto,
                  audit_store: AuditStoreProto,
                  var_store: VarStore | None = None,
-                 crypto_client: CryptoClient | None = None) -> None:
+                 crypto_client: CryptoClient | None = None,
+                 verifier: object | None = None) -> None:
         self.pdp = pdp
         self.crypto = crypto
         self.mem_store = mem_store
@@ -323,6 +331,7 @@ class ReadPipeline:
         self.var_store = var_store or VarStore()
         self.pep = PEP()
         self.crypto_client = crypto_client or CryptoClient(crypto)
+        self.verifier = verifier
 
     # ── Read ──────────────────────────────────────────────────
 
@@ -426,6 +435,16 @@ class ReadPipeline:
                 f"LOMAC: T_eff {fmt(before_t)} -> {fmt(session.t_eff)}")
 
         ct_bytes = self._get_ciphertext(chunk_id)
+
+        # 6.5. 验签（F-14）：解密之前先验证写入方签名，失败 → DENY
+        if self.verifier is not None and not self.verifier.verify(mem, ct_bytes):
+            decision.verdict = Verdict.DENY
+            decision.denied_by = "SignatureInvalid"
+            result.allowed = False
+            result.denied_by = "SignatureInvalid"
+            self.audit.log(decision)
+            return result
+
         self.crypto_client.record_allow(decision.decision_id, chunk_id)
         plain, reason = self.crypto_client.decrypt(agent, ct_bytes, decision.decision_id)
         self.crypto_client.decrypted_ids.add(chunk_id)
