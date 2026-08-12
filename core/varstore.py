@@ -97,24 +97,6 @@ class VarStore:
     def __init__(self, budget: object | None = None) -> None:
         self._by_var: dict[str, VarHandle] = {}
         self._by_chunk: dict[str, VarHandle] = {}
-        # 受限展开预算：默认内建 4-bit；可注入外部 ControlFlowBudget 共享。
-        self._budget = budget
-        self._budget_remaining = BOUNDED_THRESHOLD_BITS
-
-    def _remaining(self) -> float:
-        return self._budget.remaining if self._budget is not None else self._budget_remaining
-
-    def _consume(self, bits: float) -> None:
-        if self._budget is not None:
-            self._budget.consume(bits)
-        else:
-            self._budget_remaining -= bits
-
-    def reset_budget(self) -> None:
-        if self._budget is not None:
-            self._budget.reset()
-        else:
-            self._budget_remaining = BOUNDED_THRESHOLD_BITS
 
     @trust_rule("TR4", group="A",
                 trigger="无界展开（string，或预算耗尽退化）",
@@ -130,8 +112,11 @@ class VarStore:
                **kw) -> ExpandResult:
         """受限展开（TR3/TR4）。
 
-        容量 ≤ 4 bit 且预算充足 → BOUNDED（t_eff 降，t_eff_ctl 不变）。
+        容量 ≤ 4 bit 且 Session 预算充足 → BOUNDED（t_eff 降，t_eff_ctl 不变）。
         否则 → FULL（两者同降）。预算耗尽后受限展开退化为无界（I11 后半句）。
+
+        F-24：控制流预算只有一套，挂在 Session.capacity_used_bits 上；
+        VarStore 不再维护独立预算。
         """
         handle = self._by_var.get(var_id)
         if handle is None:
@@ -140,14 +125,14 @@ class VarStore:
         src_trust = source_trust if source_trust is not None else handle.source_trust
         sens = sensitivity if sensitivity is not None else handle.sensitivity
 
-        if bits <= BOUNDED_THRESHOLD_BITS and self._remaining() >= bits:
-            self._consume(bits)
+        if bits <= BOUNDED_THRESHOLD_BITS and sess.consume_bits(bits):
             mode = AbsorbMode.BOUNDED
         else:
             mode = AbsorbMode.FULL
         sess.absorb(handle.chunk_id, sens, src_trust, mode=mode)
+        remaining = sess.CAPACITY_BUDGET_BITS - sess.capacity_used_bits
         return ExpandResult(var_id=var_id, vtype=vtype, bits=bits, mode=mode,
-                            budget_remaining=self._remaining())
+                            budget_remaining=remaining)
 
     def store(self, handle: VarHandle) -> None:
         self._by_var[handle.var_id] = handle

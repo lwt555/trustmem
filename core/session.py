@@ -182,10 +182,6 @@ class SessionStore:
                          mode=AbsorbMode.BOUNDED)
         return True
 
-    def reset_ctl(self, session_id: str) -> None:
-        for s in self.all_of(session_id):
-            s.capacity_used_bits = 0.0
-
     @trust_rule("TR15", group="D",
                 trigger="委派创建子会话（跨主体边界）",
                 change="t_eff_child ← min(t_eff_parent, t_intrinsic_child)；区间只能更紧",
