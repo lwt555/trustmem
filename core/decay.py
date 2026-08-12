@@ -23,6 +23,7 @@ import difflib
 from dataclasses import dataclass
 
 from .labels import Trust, WriteOp, MemoryLabel, meet_trust
+from .trust_rules import trust_rule
 
 # 操作类型 → 衰减量
 DELTA: dict[WriteOp, int] = {
@@ -60,6 +61,10 @@ def _overlap_ratio(src: str, out: str) -> float:
     return difflib.SequenceMatcher(None, src, out).ratio()
 
 
+@trust_rule("TR7", group="B",
+            trigger="声明 δ=0 的操作（VERBATIM / EXTRACT）但校验失败",
+            change="op 强制降为 INFER（δ=1），可信度再降一级",
+            basis="谎报降级（δ=0 声明必须可验证）")
 def verify_op(
     op_claimed: WriteOp,
     input_texts: list[str],
@@ -86,6 +91,18 @@ def verify_op(
     return op_claimed, None
 
 
+@trust_rule("TR9", group="B",
+            trigger="跨源融合（FUSE）多条输入",
+            change="trust_out ≤ meet(全部输入)，取最脏一环",
+            basis="融合取脏（一颗老鼠屎坏一锅汤）")
+@trust_rule("TR8", group="B",
+            trigger="LLM 加工一条输入（SUMMARIZE / INFER / FUSE）",
+            change="trust_out 额外减去 δ(op)",
+            basis="加工衰减（LLM 过程本身引入不确定性）")
+@trust_rule("TR6", group="B",
+            trigger="写出一条新记忆",
+            change="trust_out ≤ meet(输入集合, 主体 t_eff)，取最弱一环，不是 max / 均值",
+            basis="Biba 无写上（no write up）")
 def compute_trust(
     input_mems: list[MemoryLabel],
     agent_trust_effective: Trust,

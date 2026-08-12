@@ -19,10 +19,13 @@ from .labels import (
 from .session import Session, SessionStore
 from .pdp import PDP, Decision, Check
 from .decay import compute_trust, DecayResult
+from .trust_rules import trust_rule
 from .policy import policy_from_label
 from .topology import Topology
 from .verdict import Verdict
 from .varstore import VarStore, VarHandle
+from pep.pep import PEP
+from ifc.crypto_client import CryptoClient
 
 
 # ──────────────────────────────────────────────────────────────
@@ -111,8 +114,9 @@ class ReadResult:
 # ──────────────────────────────────────────────────────────────
 
 class MemoryStoreProto(Protocol):
-    def put(self, mem: MemoryLabel) -> object: ...
+    def put(self, mem: MemoryLabel, ciphertext: bytes | None = None) -> object: ...
     def get(self, chunk_id: str) -> MemoryLabel | None: ...
+    def get_ciphertext(self, chunk_id: str) -> bytes | None: ...
     def list_by_task(self, task_id: str) -> list[MemoryLabel]: ...
 
 
@@ -160,6 +164,10 @@ class WritePipeline:
 
     # ── Write ─────────────────────────────────────────────────
 
+    @trust_rule("TR16", group="D",
+                trigger="记忆跨主体传播（写入即定标）",
+                change="provenance_trust 钉死在写时衰减值，不随写者固有可信度重置",
+                basis="跨主体边界复合（A 组读入 + B 组写出在边界上复合）")
     def write(
         self, *, agent: AgentLabel, session: Session,
         content: str,
@@ -238,8 +246,12 @@ class WritePipeline:
         ct = self.crypto.encrypt_memory(content, mem)
         side_effects.append(f"CP-ABE encrypted under label policy")
 
-        # 6. Persist memory
-        self.mem_store.put(mem)
+        # 6. Persist memory + ciphertext (F-12: 密文落库，不许只存标签)
+        ct_bytes = ct.to_bytes() if hasattr(ct, "to_bytes") else ct
+        try:
+            self.mem_store.put(mem, ct_bytes)
+        except TypeError:
+            self.mem_store.put(mem)   # 旧 store 未接密文参数时退化为只存标签
         side_effects.append(f"Memory persisted: {chunk_id}")
 
         # 7. Provenance links
@@ -291,12 +303,15 @@ class ReadPipeline:
     def __init__(self, pdp: PDP, crypto: CryptoEngineProto,
                  mem_store: MemoryStoreProto,
                  audit_store: AuditStoreProto,
-                 var_store: VarStore | None = None) -> None:
+                 var_store: VarStore | None = None,
+                 crypto_client: CryptoClient | None = None) -> None:
         self.pdp = pdp
         self.crypto = crypto
         self.mem_store = mem_store
         self.audit = audit_store
         self.var_store = var_store or VarStore()
+        self.pep = PEP()
+        self.crypto_client = crypto_client or CryptoClient(crypto)
 
     # ── Read ──────────────────────────────────────────────────
 
@@ -325,6 +340,10 @@ class ReadPipeline:
         else:
             decision = self.pdp.can_read(agent, mem, session, now, epoch_current)
 
+        # 生成裁决凭证 id（F-12 解密账本的关键）
+        if not decision.decision_id:
+            decision.decision_id = f"dec-{uuid.uuid4().hex[:12]}"
+
         result = ReadResult(
             allowed=decision.allowed,
             decision=decision,
@@ -333,17 +352,7 @@ class ReadPipeline:
             side_effects=side_effects,
         )
 
-        # 3. Track LOMAC effect (ALLOW only)
-        if decision.verdict == Verdict.ALLOW and session.reads:
-            last = session.reads[-1]
-            if last.t_eff_after < last.t_eff_before:
-                result.t_eff_dropped = True
-                result.t_eff_before = last.t_eff_before
-                result.t_eff_after = last.t_eff_after
-                side_effects.append(
-                    f"LOMAC: T_eff {fmt(last.t_eff_before)} -> {fmt(last.t_eff_after)}")
-
-        # 4. HIDE: create #var# handle, audit, return metadata
+        # 3. HIDE: create #var# handle, audit, return metadata（不触碰水位，I8）
         if decision.verdict == Verdict.HIDE:
             var_id = VarStore.new_id()
             handle = VarHandle(
@@ -351,6 +360,8 @@ class ReadPipeline:
                 chunk_id=chunk_id,
                 reason=decision.denied_by or "Unknown",
                 constraint_types=["bool", "enum", "number"],
+                sensitivity=mem.sensitivity,
+                source_trust=mem.provenance_trust,
                 metadata={
                     "sensitivity": fmt(mem.sensitivity),
                     "trust": fmt(mem.provenance_trust),
@@ -369,14 +380,33 @@ class ReadPipeline:
             result.side_effects = side_effects
             return result
 
-        # 5. DENY (or CONFIRM): audit and return
+        # 4. DENY: audit and return
         if decision.verdict == Verdict.DENY:
             result.denied_by = decision.denied_by
             self.audit.log(decision)
             return result
 
-        # 6. Decrypt content (ALLOW path)
-        plain, reason = self.crypto.decrypt_memory(agent, None)  # placeholder
+        # 5. CONFIRM 必须被拦截（F-12）：不落解密路径，返回未授权
+        if decision.verdict == Verdict.CONFIRM:
+            result.allowed = False
+            result.denied_by = decision.denied_by or "HITL-Required"
+            self.audit.log(decision)
+            return result
+
+        # 6. Decrypt content (ALLOW path) —— 先判决后解密
+        before_t = session.t_eff
+        self.pep.commit(session, decision)          # 水位提交点（F-04）
+        if session.t_eff < before_t:
+            result.t_eff_dropped = True
+            result.t_eff_before = before_t
+            result.t_eff_after = session.t_eff
+            side_effects.append(
+                f"LOMAC: T_eff {fmt(before_t)} -> {fmt(session.t_eff)}")
+
+        ct_bytes = self._get_ciphertext(chunk_id)
+        self.crypto_client.record_allow(decision.decision_id, chunk_id)
+        plain, reason = self.crypto_client.decrypt(agent, ct_bytes, decision.decision_id)
+        self.crypto_client.decrypted_ids.add(chunk_id)
         side_effects.append(reason)
 
         # 7. Audit
@@ -386,6 +416,15 @@ class ReadPipeline:
         result.side_effects = side_effects
         result.plaintext = plain
         return result
+
+    def _get_ciphertext(self, chunk_id: str) -> bytes | None:
+        get_ct = getattr(self.mem_store, "get_ciphertext", None)
+        if get_ct is None:
+            return None
+        ct = get_ct(chunk_id)
+        if ct is None:
+            raise RuntimeError(f"密文缺失: {chunk_id}（不许静默降级，F-12）")
+        return ct
 
     # ── Batch read ────────────────────────────────────────────
 

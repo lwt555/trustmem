@@ -13,6 +13,7 @@ TrustMem 报告图表生成脚本
 """
 from __future__ import annotations
 
+import json
 import sys
 import os
 
@@ -20,7 +21,10 @@ import os
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+BENCH = os.path.join(ROOT, "bench")
 
 import matplotlib
 matplotlib.use("Agg")
@@ -70,9 +74,12 @@ def fig1_attack_ab():
         "A10\n成员推理", "A11\nEchoLeak", "A12\n降级洗白",
         "A13\n污染扩散",
     ]
-    # All attacks: OFF=100% success, ON=0% success
-    off = [1.0] * 13
-    on = [0.0] * 13
+    # 实测真值（F-13）：从 bench/attack_results.json 读取，禁止硬编码。
+    with open(os.path.join(BENCH, "attack_results.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    attack_ids = sorted(data)
+    off = [data[a]["NO_PROTECTION"]["asr"] for a in attack_ids]
+    on = [data[a]["FULL"]["asr"] for a in attack_ids]
 
     x = np.arange(len(attacks))
     width = 0.35
@@ -84,17 +91,17 @@ def fig1_attack_ab():
                    label="防护 ON", color="#22c55e", alpha=0.85, edgecolor="white")
 
     ax.set_ylabel("攻击成功率 (%)")
-    ax.set_title("图 1：13 个攻击场景 A/B 对照 — 防护 ON 下攻击成功率 0%")
+    ax.set_title("图 1：13 个攻击场景 A/B 对照（实测真值）")
     ax.set_xticks(x)
     ax.set_xticklabels(attacks, fontsize=8)
     ax.legend(loc="upper right")
     ax.set_ylim(0, 115)
 
-    for bar in bars1:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1, "100%",
+    for bar, v in zip(bars1, off):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1, f"{int(v * 100)}%",
                 ha="center", va="bottom", fontsize=7, fontweight="bold", color="#ef4444")
-    for bar in bars2:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1, "0%",
+    for bar, v in zip(bars2, on):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1, f"{int(v * 100)}%",
                 ha="center", va="bottom", fontsize=7, fontweight="bold", color="#22c55e")
 
     ax.axhline(y=0, color="black", linewidth=0.5)
@@ -160,13 +167,17 @@ def fig2_invariant_coverage():
 # Figure 3: 性能基准
 # ══════════════════════════════════════════════════════════════
 def fig3_benchmarks():
+    # 实测真值（F-13）：从 bench/benchmarks.json 读取，禁止硬编码。
+    with open(os.path.join(BENCH, "benchmarks.json"), encoding="utf-8") as f:
+        bm = json.load(f)
+    tgt = bm["targets"]
     metrics = [
-        ("PDP\ncan_read", 48000, 3000),
-        ("PDP\ncan_write", 35000, 2000),
-        ("Merkle\nlog", 280000, 10000),
-        ("Merkle\nproof", 180, 5000),    # μs
-        ("ABE\nenc+dec", 650, 100),
-        ("Policy\ncheck", 850000, 10000),
+        ("PDP\ncan_read", bm["can_read_ops_s"], tgt["can_read_ops_s"]),
+        ("PDP\ncan_write", bm["can_write_ops_s"], tgt["can_write_ops_s"]),
+        ("Merkle\nlog", bm["merkle_log_ops_s"], tgt["merkle_log_ops_s"]),
+        ("Merkle\nproof", bm["merkle_proof_us"], tgt["merkle_proof_us"]),   # μs
+        ("ABE\nenc+dec", bm["abe_enc_dec_us"], tgt["abe_enc_dec_us"]),     # μs
+        ("Policy\ncheck", bm["policy_check_ops_s"], tgt["policy_check_ops_s"]),
     ]
 
     labels = [m[0] for m in metrics]

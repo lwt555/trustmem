@@ -397,7 +397,17 @@ async def ws_step(websocket: WebSocket):
                 agent = agents[p["agent_id"]]
                 sid = p.get("session_id", "ws-session")
                 session = store.get_or_start(sid, agent, p.get("task_id", "ws-task"))
-                result = read_pipe.read(agent=agent, session=session, chunk_id=p["chunk_id"])
+                scope = None
+                if p.get("scope_c_max") or p.get("scope_t_min"):
+                    scope = TaskScope(
+                        task_id=p.get("task_id", "") or "",
+                        c_ctx_max=_parse_clearance(p.get("scope_c_max")),
+                        t_ctx_min=_parse_trust(p.get("scope_t_min")),
+                        ingest=(IngestMode.CONSULT
+                                if str(p.get("scope_ingest", "")).upper() == "CONSULT"
+                                else IngestMode.LEARN),
+                    )
+                result = read_pipe.read(agent=agent, session=session, chunk_id=p["chunk_id"], scope=scope)
 
                 step = StepResult(
                     step_type="read", allowed=result.allowed,

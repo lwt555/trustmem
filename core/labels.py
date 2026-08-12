@@ -264,15 +264,35 @@ EXPORT_TOOL_REQUIRED_TRUST: dict[str, Trust] = {
 }
 
 
-# 网络出口工具 —— 一旦声明就会拉低 c_ctx_max
-EGRESS_TOOLS: set[str] = {"web_search", "intel_fetch", "api.external"}
+# 数据出口工具 —— 设计文档 §2.6 策略分配表"数据出口"类，全部挂 P-F（I4）。
+# 一旦声明就会拉低 c_ctx_max；运行时 c_eff ⊑ readers 才放行。
+EGRESS_TOOLS: set[str] = {
+    "memory.write",       # 写回记忆（数据出口）
+    "file_write",         # 落盘
+    "external_api.call",  # 外部 API 调用
+    "answer_to_user",     # 回复用户
+    "web_search",         # 网络出口
+    "intel_fetch",        # 情报抓取
+    # 旧命名别名（保持既有调用兼容，同属数据出口）
+    "api.external",
+    "file.write",
+    "api.respond",
+}
 
-# 出口读者要求 —— 每个出口工具对 agent 密级的下限要求
-# Fail-closed: 在 EGRESS_TOOLS 中但不在 EGRESS_READERS 中的工具一律拒绝
+# 出口读者要求 —— 每个出口工具对应的"接收方"能读的最高密级。
+# 判定方向（F-02）：allow(egress) iff c_eff ⊑ readers(tool)。
+# Fail-closed: 在 EGRESS_TOOLS 中但不在 EGRESS_READERS 中的工具，readers 取 L0_PUBLIC。
 EGRESS_READERS: dict[str, Clearance] = {
     "web_search": Clearance.L0_PUBLIC,
     "intel_fetch": Clearance.L0_PUBLIC,
+    "answer_to_user": Clearance.L1_INTERNAL,
+    "external_api.call": Clearance.L1_INTERNAL,
+    "file_write": Clearance.L2_SENSITIVE,
+    "memory.write": Clearance.L3_SECRET,   # 写回受 can_write 的 BLP-Star / C-Eff-WriteDown 约束
+    # 旧命名别名
     "api.external": Clearance.L1_INTERNAL,
+    "file.write": Clearance.L2_SENSITIVE,
+    "api.respond": Clearance.L1_INTERNAL,
 }
 
 

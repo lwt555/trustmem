@@ -18,6 +18,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from .labels import MemoryLabel, Trust, fmt
+from .trust_rules import trust_rule
 
 
 class EvidenceType(str, Enum):
@@ -52,6 +53,18 @@ class UpgradeResult:
         return f"提升 {fmt(self.trust_before)} → {fmt(self.trust_after)} ({self.reason})"
 
 
+@dataclass
+class AnchorReceipt:
+    """越格事件（背书 / 降密）的锚定回执。verified=False 即视为未上链。"""
+    tx_id: str
+    verified: bool
+    root: bytes | None = None
+
+
+@trust_rule("TR14", group="C",
+            trigger="交叉印证：多个来源需为独立发布实体",
+            change="共享 publisher/ASN 判为 1 源 → 不提升；≥2 独立实体 → T+1",
+            basis="抗 Sybil（独立性判到发布实体级）")
 def _independent_sources(urls: list[str]) -> int:
     """
     来源独立性的工程判据：注册域 + 二级域去重。
@@ -73,6 +86,18 @@ class Upgrader:
 
     MIN_INDEPENDENT_SOURCES = 2
 
+    @trust_rule("TR13", group="C",
+                trigger="越格提升证据：人在环显式确认（密码学验签）",
+                change="T ← T3（直升）",
+                basis="人在环签名背书")
+    @trust_rule("TR12", group="C",
+                trigger="越格提升证据：结构化校验通过（IOC/CVE/签名）",
+                change="T ← min(3, T+1)，封顶 T3",
+                basis="结构化校验背书")
+    @trust_rule("TR11", group="C",
+                trigger="越格提升证据：与本地高可信记忆一致",
+                change="T ← min(3, T+1)，封顶 T3",
+                basis="本地一致性背书")
     def try_upgrade(self, mem: MemoryLabel, ev: Evidence,
                     sig_verifier: Callable[[str, str], bool] | None = None,
                     ) -> UpgradeResult:
@@ -129,3 +154,16 @@ class Upgrader:
             "ts": datetime.now(timezone.utc).isoformat(),
         }
         return UpgradeResult(True, before, after, ev.etype.value, payload)
+
+    def apply_to_session(self, sess: "Session", result: UpgradeResult,
+                         anchor_receipt: AnchorReceipt | None) -> None:
+        """唯一允许会话水位上升的入口（F-05 / 铁律 8）。
+
+        三者齐全才放行：证据（result.applied）+ 锚定回执（I12 越格必留痕）。
+        HITL 签名在 try_upgrade 阶段已由 sig_verifier 校验。
+        """
+        if not result.applied:
+            raise PermissionError("未通过背书门，不得提升会话水位")
+        if anchor_receipt is None or not anchor_receipt.verified:
+            raise PermissionError("缺锚定回执，不得提升（I12 越格必留痕）")
+        sess._raise_trust_via_gate(result.trust_after)

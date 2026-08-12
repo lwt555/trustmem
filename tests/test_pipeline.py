@@ -393,7 +393,7 @@ class TestReadPipeline:
         assert result.memory.chunk_id == "read-me"
 
     def test_read_up_denied(self, read_pipe, executor, mem_store):
-        """BLP: no read up — returns HIDE with var handle."""
+        """BLP: no read up — hard DENY (F-01), no var handle."""
         mem = MemoryLabel(chunk_id="secret-1", sensitivity=Clearance.L3_SECRET,
                           provenance_trust=Trust.T3_HIGH, layer=Layer.CONCLUSION,
                           memory_type=MemoryType.SEMANTIC, owner_agent="planner-1",
@@ -403,9 +403,9 @@ class TestReadPipeline:
         exec_sess = Session.start("s-e1", executor, "task-1")
         result = read_pipe.read(agent=executor, session=exec_sess, chunk_id="secret-1")
         assert not result.allowed
-        assert result.hidden
-        assert result.var_handle is not None
-        assert result.var_handle.reason == "BLP-SimpleSecurity"
+        assert not result.hidden
+        assert result.var_handle is None
+        assert result.denied_by == "BLP-SimpleSecurity"
 
     def test_read_wrong_task_denied(self, read_pipe, analyst, session, mem_store):
         """NeedToKnow: task domain mismatch."""
@@ -453,7 +453,9 @@ class TestReadPipeline:
         result = read_pipe.read(agent=analyst, session=session, chunk_id="scoped-mem",
                                scope=scope)
         assert not result.allowed
-        assert result.denied_by == "TaskScope-T"
+        assert result.hidden
+        assert result.var_handle is not None
+        assert result.var_handle.reason == "TaskScope-T"
 
     def test_read_with_consult_scope(self, read_pipe, analyst, session, mem_store):
         """CONSULT scope returns HIDE and marks chunks as consulted."""
@@ -554,7 +556,7 @@ class TestWriteThenRead:
         assert r_result.t_eff_dropped
         assert session.t_eff == Trust.T0_UNTRUSTED
 
-        # 2. Write with dropped T_eff
+        # 2. Write with dropped T_eff — F-03 P-T 门拦截（t_eff_ctl 也已降到 T0）
         w_result = write_pipe.write(
             agent=analyst, session=session,
             content="analysis based on dirty intel",
@@ -563,9 +565,8 @@ class TestWriteThenRead:
             memory_type=MemoryType.INTEL,
             input_mems=[dirty], op=WriteOp.INFER,
         )
-        assert w_result.allowed
-        # T(new) = min(T0_from_intel, T0_T_eff) - 1(INFER) = 0
-        assert w_result.memory.provenance_trust == Trust.T0_UNTRUSTED
+        assert not w_result.allowed
+        assert w_result.denied_by == "P-T-ControlFlow"
 
 
 class TestTaskScopeWrite:

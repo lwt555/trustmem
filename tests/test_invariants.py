@@ -92,6 +92,8 @@ def test_I3_low_water_mark(trials=2000, seed=42):
             d = PDP_.can_read(agent, m, s)
             if d.allowed:
                 read_trusts.append(tr)
+                c, t = d.pending_absorb
+                s.absorb(m.chunk_id, c, t)
         expect = min([agent.trust_intrinsic] + read_trusts)
         if s.t_eff != expect:
             violations += 1
@@ -108,7 +110,7 @@ def test_I4_no_write_up(trials=3000, seed=7):
     for _ in range(trials):
         agent = rnd.choice(list(AGENTS.values()))
         s = Session.start("t", agent, TASK)
-        s.elevate(rnd.choice(list(Trust)))
+        s.t_eff = rnd.choice(list(Trust))
         ins = [_mem(f"i{k}", Clearance.L0_PUBLIC, rnd.choice(list(Trust)),
                     Layer.CONCLUSION, "log") for k in range(rnd.randint(1, 3))]
         op = rnd.choice(list(WriteOp))
@@ -135,8 +137,12 @@ def test_I5_tainted_session_cannot_invoke_high_risk(trials=2000, seed=11):
         for i in range(rnd.randint(1, 4)):
             tr = rnd.choice(list(Trust))
             m = _mem(f"m{i}", Clearance.L0_PUBLIC, tr, Layer.CONCLUSION, "log")
-            if PDP_.can_read(agent, m, s).allowed and tr <= Trust.T1_LOW:
-                got_low = True
+            d = PDP_.can_read(agent, m, s)
+            if d.allowed:
+                c, t = d.pending_absorb
+                s.absorb(m.chunk_id, c, t)
+                if tr <= Trust.T1_LOW:
+                    got_low = True
         if not got_low:
             continue
         tainted += 1
@@ -169,7 +175,7 @@ def test_I6_need_to_know():
 def test_I7_ttl_blocks_read():
     past = datetime.now(timezone.utc) - timedelta(days=10)
     expired = AgentLabel("exp", Role.ANALYST, Clearance.L3_SECRET, Trust.T3_HIGH,
-                         task_domain={TASK},
+                         task_domain={TASK}, collab_group={GROUP_SOC},
                          ttl_start=past, ttl_end=past + timedelta(hours=1))
     mem = _mem("m", Clearance.L0_PUBLIC, Trust.T3_HIGH, Layer.CONCLUSION, "exp")
     s = Session.start("t", expired, TASK)
@@ -215,7 +221,7 @@ def test_I9_lifecycle_blocks_non_active():
 # 不变式 I10 · Layer Write：无下级的 Agent 不能写 D 层
 # ══════════════════════════════════════════════════════════════
 def test_I10_layer_write_requires_children():
-    agent = AGENTS["intel"]  # EXTERNAL, no children
+    agent = AGENTS["log"]  # RETRIEVER, no children, T3 so P-T gate passes
     s = Session.start("t", agent, TASK)
     d, _ = PDP_.can_write(agent, s, Clearance.L3_SECRET, Layer.DIRECTIVE,
                           [], WriteOp.VERBATIM)
@@ -234,7 +240,7 @@ def test_I11_session_isolation(trials=2000, seed=17):
         s1 = Session.start("s1", agent, TASK)
         s2 = Session.start("s2", agent, TASK)
         tr = rnd.choice(list(Trust))
-        s1.absorb("x", tr)
+        s1.absorb("x", Clearance.L0_PUBLIC, tr)
         if s2.t_eff != agent.trust_intrinsic:
             violations += 1
     print(f"I11 会话隔离         : {trials:6d} 会话对, {violations} 违反")

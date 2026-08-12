@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from core.labels import (AgentLabel, Trust, Role, Clearance, Layer,
                          MemoryType, MemoryLabel, WriteOp, IngestMode, TaskScope)
-from core.session import Session, SessionStore
+from core.session import Session, SessionStore, AbsorbMode
 from core.topology import Topology
 from core.pdp import PDP
 
@@ -111,27 +111,27 @@ def test_s4_6_widen_hash_protection():
 # §4 #7: t_eff vs t_eff_ctl 分离
 # ══════════════════════════════════════════════════════════════
 def test_s4_7_teff_vs_teff_ctl_separation():
-    """受限查询只降 t_eff_ctl，不降 t_eff。两个必须分离."""
+    """无界展开(FULL)同降两水位；受限展开(BOUNDED)只降 t_eff。两者必须分离."""
     agent = _agent()
-    sess = Session.start("s7", agent, "task_x")
+
+    # 无界展开（普通读完整内容）→ t_eff 与 t_eff_ctl 一起降
+    sess = Session.start("s7_full", agent, "task_x")
     assert sess.t_eff == Trust.T2_MEDIUM
     assert sess.t_eff_ctl == Trust.T2_MEDIUM
+    sess.absorb("full_chunk", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED,
+                mode=AbsorbMode.FULL)
+    assert sess.t_eff == Trust.T0_UNTRUSTED, "FULL: t_eff 应降为 T0"
+    assert sess.t_eff_ctl == Trust.T0_UNTRUSTED, "FULL: t_eff_ctl 应同降为 T0"
+    print(f"  #7a: FULL absorb drops both t_eff & t_eff_ctl")
 
-    # 模拟受限查询：读 T0 情报 → t_eff 降
-    sess.absorb("low_trust_chunk", Trust.T0_UNTRUSTED)
-    assert sess.t_eff == Trust.T0_UNTRUSTED, "t_eff 读取 T0 后应降为 T0"
-
-    # t_eff_ctl 只在显式调用 degrade_ctl() 后才降
-    # absorb 不应自动降 t_eff_ctl——否则隔离 LLM 成摆设
-    assert sess.t_eff_ctl == Trust.T2_MEDIUM, \
-        f"t_eff_ctl 不应因普通读而降低。实际={sess.t_eff_ctl.name}。若降低则 DD 类任务全废"
-    print(f"  #7a: t_eff_ctl stays T2_MEDIUM after read → 分离有效")
-
-    # 受限查询明确调用 degrade_ctl
-    sess.degrade_ctl(Trust.T0_UNTRUSTED)
-    assert sess.t_eff_ctl == Trust.T0_UNTRUSTED
-    assert sess.t_eff == Trust.T0_UNTRUSTED
-    print(f"  #7b: degrade_ctl(T0) applied — both at T0")
+    # 受限展开（隔离 LLM 查询）→ 只降 t_eff，t_eff_ctl 不变
+    sess2 = Session.start("s7_bounded", agent, "task_x")
+    sess2.absorb("bounded_chunk", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED,
+                 mode=AbsorbMode.BOUNDED)
+    assert sess2.t_eff == Trust.T0_UNTRUSTED, "BOUNDED: t_eff 应降为 T0"
+    assert sess2.t_eff_ctl == Trust.T2_MEDIUM, \
+        f"BOUNDED: t_eff_ctl 不应降低。实际={sess2.t_eff_ctl.name}。若降低则隔离 LLM 成摆设"
+    print(f"  #7b: BOUNDED absorb drops t_eff only — 分离有效")
 
     # reset 后恢复
     sess.reset()
@@ -148,33 +148,26 @@ def test_s4_8_capacity_budget_persists_across_delegate():
     agent = _agent()
     store = SessionStore()
 
-    # 父会话消耗预算
-    store.get_or_start("parent", agent, "task_A")
-    # 默认预算 16.0，连续消耗 5 次
-    for i in range(5):
-        ok = store.consume_ctl("parent", cost=1.0, source_trust=Trust.T1_LOW)
+    # 父会话消耗预算（4 bit 封顶）
+    parent = store.get_or_start("parent", agent, "task_A")
+    for i in range(4):
+        ok = store.consume_ctl("parent", cost=1.0)
         assert ok, f"第 {i+1} 次 consume_ctl 应成功"
 
-    parent_used = store._capacity_used["parent"]
-    assert parent_used == 5.0
-    print(f"  #8a: parent consumed 5.0/16.0 budget")
+    assert parent.capacity_used_bits == 4.0
+    assert not store.consume_ctl("parent", cost=1.0), "第 5 次应拒绝（预算耗尽）"
+    print(f"  #8a: parent consumed 4.0/4.0 budget")
 
     # delegate 子会话 — 预算必须继承，不许重置
     child_sess = store.delegate("parent", agent, "task_sub", "child")
-    assert store._capacity_used.get("child", 0.0) == 5.0, \
-        f"子会话预算应继承 5.0，实际={store._capacity_used.get('child', 0.0)}"
-    assert store._capacity_budget.get("child", 0.0) == 16.0
-    print(f"  #8b: child inherited budget 5.0/16.0 after delegate")
+    assert child_sess.capacity_used_bits == 4.0, \
+        f"子会话预算应继承 4.0，实际={child_sess.capacity_used_bits}"
+    print(f"  #8b: child inherited budget 4.0/4.0 after delegate")
 
-    # 子会话继续消耗直到耗尽
-    for i in range(11):  # 5 + 11 = 16
-        ok = store.consume_ctl("child", cost=1.0)
-        if i < 11:
-            assert ok, f"子会话第 {i+1} 次应成功 (共 {5+1+i})"
-    # 第 17 次应拒绝
+    # 子会话继续消耗 → 拒绝
     exhausted = store.consume_ctl("child", cost=1.0)
     assert not exhausted, "预算耗尽后应拒绝"
-    print(f"  #8c: budget exhausted after 16 uses — 第 17 次拒绝")
+    print(f"  #8c: budget exhausted after 4 uses — 第 5 次拒绝")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -244,12 +237,15 @@ def test_s4_11c_ceff_writedown_has_nowritedown_label():
     planner = _planner()
     sess = Session.start("s11c", planner, "task_x")
 
-    # 先读 L3 内容 → c_eff 升到 L3
+    # 先读 L3 内容 → c_eff 升到 L3（判定与生效分离：can_read 纯函数，需提交 absorb）
     m_l3 = MemoryLabel(chunk_id="top_secret", sensitivity=Clearance.L3_SECRET,
                        provenance_trust=Trust.T3_HIGH, layer=Layer.CONCLUSION,
                        memory_type=MemoryType.INTEL, owner_agent="admin",
                        task_binding="task_x", collab_group={"soc"})
-    pdp.can_read(planner, m_l3, sess)
+    d_read = pdp.can_read(planner, m_l3, sess)
+    assert d_read.allowed
+    c, t = d_read.pending_absorb
+    sess.absorb(m_l3.chunk_id, c, t)
     assert sess.c_eff == Clearance.L3_SECRET
 
     # 尝试写 L0 内容 → C-Eff-WriteDown 应拒绝 + NoWriteDown
@@ -267,25 +263,23 @@ def test_s4_11c_ceff_writedown_has_nowritedown_label():
 # §4 #7B: consume_ctl() → degrade_ctl() 集成路径
 # ══════════════════════════════════════════════════════════════
 def test_s4_7b_budget_exhaustion_degrades_teff_ctl():
-    """consume_ctl 耗尽预算时通过 source_trust 联动降解 t_eff_ctl."""
+    """consume_ctl(source_trust) 走 BOUNDED：t_eff 降，t_eff_ctl 不变（F-06）。"""
     agent = _agent()
     store = SessionStore()
 
     sess = store.get_or_start("s7b", agent, "task_x")
     assert sess.t_eff_ctl == Trust.T2_MEDIUM
 
-    # 通过 consume_ctl (而非直接 degrade_ctl) 消耗预算
-    for i in range(5):
+    # 通过 consume_ctl 消耗预算（受限展开，BOUNDED）
+    for i in range(4):
         ok = store.consume_ctl("s7b", cost=1.0, source_trust=Trust.T1_LOW)
         assert ok, f"第 {i+1} 次 consume_ctl 应成功"
-        assert sess.t_eff_ctl == Trust.T1_LOW, \
-            f"consume_ctl with source_trust=T1 应降解 t_eff_ctl，实际={sess.t_eff_ctl.name}"
+        assert sess.t_eff == Trust.T1_LOW, \
+            f"consume_ctl with source_trust=T1 应降 t_eff，实际={sess.t_eff.name}"
+        assert sess.t_eff_ctl == Trust.T2_MEDIUM, \
+            f"BOUNDED 展开不得降 t_eff_ctl，实际={sess.t_eff_ctl.name}"
 
-    # 继续用更低的 source_trust → t_eff_ctl 继续降
-    for i in range(3):
-        ok = store.consume_ctl("s7b", cost=1.0, source_trust=Trust.T0_UNTRUSTED)
-        assert ok
-    assert sess.t_eff_ctl == Trust.T0_UNTRUSTED, \
-        f"consume_ctl with source_trust=T0 后 t_eff_ctl 应=T0，实际={sess.t_eff_ctl.name}"
-    print(f"  #7b: consume_ctl → degrade_ctl integration verified — "
-          f"t_eff_ctl={sess.t_eff_ctl.name}, used={store._capacity_used['s7b']}")
+    # 预算耗尽后，第 5 次受限展开应被拒绝
+    assert not store.consume_ctl("s7b", cost=1.0), "预算耗尽后应拒绝"
+    print(f"  #7b: consume_ctl BOUNDED verified — t_eff={sess.t_eff.name}, "
+          f"t_eff_ctl={sess.t_eff_ctl.name}, used={sess.capacity_used_bits}")

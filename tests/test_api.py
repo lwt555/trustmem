@@ -157,10 +157,11 @@ class TestReadEndpoint:
         assert data["decision_verdict"] == "ALLOW"
 
     def test_read_hide(self, client):
-        """L0 agent reading L2 memory should get HIDE."""
+        """analyst reading L2 memory under c_ctx_max=L0 → TaskScope-C HIDE."""
         cid = self._write_and_flush(client)
         r = client.post("/api/read", json={
-            "agent_id": "intel", "session_id": "sess-r2", "chunk_id": cid,
+            "agent_id": "analyst", "session_id": "sess-r2", "chunk_id": cid,
+            "scope_c_max": "L0",
         })
         assert r.status_code == 200
         data = r.json()
@@ -340,7 +341,7 @@ class TestWebSocket:
             assert data["allowed"] is True
 
     def test_ws_read_hide_step(self, client):
-        """intel(L0) reads analyst(L2) memory → HIDE via WebSocket."""
+        """analyst reads L2 memory under c_ctx_max=L0 → TaskScope-C HIDE via WebSocket."""
         w = client.post("/api/write", json={
             "agent_id": "analyst", "session_id": "ws-test-3",
             "task_id": "INC-2026-0731",
@@ -354,8 +355,9 @@ class TestWebSocket:
             ws.send_json({
                 "step_type": "read",
                 "payload": {
-                    "agent_id": "intel", "session_id": "ws-test-hide",
+                    "agent_id": "analyst", "session_id": "ws-test-hide",
                     "chunk_id": cid,
+                    "scope_c_max": "L0", "scope_t_min": "T0",
                 },
             })
             data = ws.receive_json()

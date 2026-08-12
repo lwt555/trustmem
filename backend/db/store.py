@@ -95,7 +95,7 @@ class MemoryStore:
     def __init__(self, db: SASession | None = None) -> None:
         self._db = db or get_db()
 
-    def put(self, mem: MemoryLabel) -> MemoryChunkORM:
+    def put(self, mem: MemoryLabel, ciphertext: bytes | None = None) -> MemoryChunkORM:
         row = self._db.query(MemoryChunkORM).filter_by(chunk_id=mem.chunk_id).first()
         if row:
             for attr in ("sensitivity", "provenance_trust", "layer", "memory_type",
@@ -103,8 +103,12 @@ class MemoryStore:
                          "provenance_chain", "lifecycle", "epoch", "declassified",
                          "ttl_end"):
                 setattr(row, attr, getattr(_memlabel_to_orm(mem), attr))
+            if ciphertext is not None:
+                row.content_encrypted = ciphertext.decode("utf-8")
         else:
             row = _memlabel_to_orm(mem)
+            if ciphertext is not None:
+                row.content_encrypted = ciphertext.decode("utf-8")
             self._db.add(row)
         self._db.commit()
         return row
@@ -112,6 +116,12 @@ class MemoryStore:
     def get(self, chunk_id: str) -> MemoryLabel | None:
         row = self._db.query(MemoryChunkORM).filter_by(chunk_id=chunk_id).first()
         return _memlabel_from_orm(row) if row else None
+
+    def get_ciphertext(self, chunk_id: str) -> bytes | None:
+        row = self._db.query(MemoryChunkORM).filter_by(chunk_id=chunk_id).first()
+        if row is None or not row.content_encrypted:
+            return None
+        return row.content_encrypted.encode("utf-8")
 
     def list_by_owner(self, agent_id: str) -> list[MemoryLabel]:
         rows = self._db.query(MemoryChunkORM).filter_by(owner_agent=agent_id).all()

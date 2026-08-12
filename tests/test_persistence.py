@@ -25,7 +25,7 @@ from core.labels import (
     MemoryLabel, AgentLabel, Clearance, Trust, Layer, MemoryType,
     Role, WriteOp,
 )
-from core.session import Session, ReadRecord
+from core.session import Session, ReadRecord, AbsorbMode
 from core.pdp import Decision, Check
 from core.decay import compute_trust, DecayResult
 
@@ -256,6 +256,7 @@ def test_session_end(sess_persist):
 
 def test_read_record_persist(read_store):
     rec = ReadRecord(chunk_id="ch-1", trust=Trust.T1_LOW,
+                     sensitivity=Clearance.L0_PUBLIC, mode=AbsorbMode.FULL,
                      t_eff_before=Trust.T3_HIGH, t_eff_after=Trust.T1_LOW)
     read_store.record("s1", "a1", rec)
 
@@ -269,10 +270,12 @@ def test_read_record_persist(read_store):
 def test_read_record_for_chunk(read_store):
     for i in range(5):
         rec = ReadRecord(chunk_id="ch-X", trust=Trust.T2_MEDIUM,
+                         sensitivity=Clearance.L0_PUBLIC, mode=AbsorbMode.FULL,
                          t_eff_before=Trust.T3_HIGH, t_eff_after=Trust.T2_MEDIUM)
         read_store.record(f"s{i}", "a1", rec)
 
     rec = ReadRecord(chunk_id="ch-Y", trust=Trust.T1_LOW,
+                     sensitivity=Clearance.L0_PUBLIC, mode=AbsorbMode.FULL,
                      t_eff_before=Trust.T2_MEDIUM, t_eff_after=Trust.T1_LOW)
     read_store.record("s-other", "a1", rec)
 
@@ -397,7 +400,7 @@ def test_session_and_audit_integration(sess_persist, audit_store, read_store):
     sess_persist.save(sess)
 
     # Simulate LOMAC absorption
-    rec = sess.absorb("ch-low", Trust.T1_LOW)
+    rec = sess.absorb("ch-low", Clearance.L0_PUBLIC, Trust.T1_LOW)
     read_store.record("int-s1", "analyst-1", rec)
 
     assert rec.t_eff_before == Trust.T3_HIGH

@@ -1,0 +1,16 @@
+{
+  "can_read_ops_s": 121274,
+  "can_write_ops_s": 102344,
+  "merkle_log_ops_s": 152389,
+  "merkle_proof_us": 1,
+  "abe_enc_dec_us": 10,
+  "policy_check_ops_s": 478161,
+  "targets": {
+    "can_read_ops_s": 3000,
+    "can_write_ops_s": 2000,
+    "merkle_log_ops_s": 10000,
+    "merkle_proof_us": 5000,
+    "abe_enc_dec_us": 100,
+    "policy_check_ops_s": 10000
+  }
+}

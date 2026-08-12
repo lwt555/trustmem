@@ -4,16 +4,62 @@ VarStore — #var# 句柄注册表。
 当 PDP 返回 HIDE 裁决时，隐藏内容被分配一个 #var# 句柄。
 Agent 可通过隔离 LLM 对 #var# 发起类型约束查询 (bool/enum/number)，
 但不能读取原文。
+
+受限展开（TR3/TR4）：`expand` 按受限类型的容量（bit）决定
+BOUNDED（t_eff 降、t_eff_ctl 不变）还是 FULL（两者同降）。
 """
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .labels import Trust
+from .labels import Trust, Clearance
+from .session import AbsorbMode
+from .trust_rules import trust_rule
 
 ConstraintType = Literal["bool", "enum", "number"]
+
+
+# 受限类型的容量表（bit 为单位）。None 表示运行时计算。
+VTYPE_CAPACITY_BITS: dict[str, float | None] = {
+    "bool": 1.0,
+    "enum": None,           # 运行时算：log2(len(options)) 向上取整
+    "number": None,         # 运行时算：log2((max-min)/step + 1) 向上取整
+    "short_string": 32.0,
+    "string": float("inf"),
+}
+
+# 受限展开阈值（I11）：容量 ≤ 4 bit 走受限展开，超过则无界展开
+BOUNDED_THRESHOLD_BITS = 4.0
+
+
+def capacity_of(vtype: str, **kw) -> float:
+    """计算某个受限类型的容量（bit）。"""
+    base = VTYPE_CAPACITY_BITS.get(vtype)
+    if base is not None:
+        return base
+    if vtype == "enum":
+        n = max(1, len(kw.get("options", [])))
+        return math.ceil(math.log2(n)) if n > 1 else 1.0
+    if vtype == "number":
+        min_val = kw.get("min_val", 0.0)
+        max_val = kw.get("max_val", 100.0)
+        step = kw.get("step", 1.0)
+        n = max(1, int((max_val - min_val) / step) + 1)
+        return math.ceil(math.log2(n)) if n > 1 else 1.0
+    raise ValueError(f"未知受限类型: {vtype}")
+
+
+@dataclass
+class ExpandResult:
+    """受限展开的结果：展开后水位的记录。"""
+    var_id: str
+    vtype: str
+    bits: float
+    mode: AbsorbMode
+    budget_remaining: float
 
 
 @dataclass
@@ -24,6 +70,7 @@ class VarHandle:
     reason: str                           # which rule caused HIDE
     constraint_types: list[ConstraintType] = field(default_factory=lambda: ["bool", "enum", "number"])
     source_trust: Trust = Trust.T0_UNTRUSTED  # trust level of the hidden content
+    sensitivity: Clearance = Clearance.L0_PUBLIC
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -47,9 +94,60 @@ class VarHandle:
 class VarStore:
     """#var# 句柄注册表。存储所有被隐藏的记忆引用。"""
 
-    def __init__(self) -> None:
+    def __init__(self, budget: object | None = None) -> None:
         self._by_var: dict[str, VarHandle] = {}
         self._by_chunk: dict[str, VarHandle] = {}
+        # 受限展开预算：默认内建 4-bit；可注入外部 ControlFlowBudget 共享。
+        self._budget = budget
+        self._budget_remaining = BOUNDED_THRESHOLD_BITS
+
+    def _remaining(self) -> float:
+        return self._budget.remaining if self._budget is not None else self._budget_remaining
+
+    def _consume(self, bits: float) -> None:
+        if self._budget is not None:
+            self._budget.consume(bits)
+        else:
+            self._budget_remaining -= bits
+
+    def reset_budget(self) -> None:
+        if self._budget is not None:
+            self._budget.reset()
+        else:
+            self._budget_remaining = BOUNDED_THRESHOLD_BITS
+
+    @trust_rule("TR4", group="A",
+                trigger="无界展开（string，或预算耗尽退化）",
+                change="t_eff 与 t_eff_ctl 一起下降",
+                basis="无界展开（数据流与控制流同时被污染）")
+    @trust_rule("TR3", group="A",
+                trigger="受限展开（bool/enum/number，容量 ≤ 4 bit 且预算充足）",
+                change="t_eff 下降，t_eff_ctl 不变",
+                basis="受限展开（隔离 LLM 的控制流水位不受影响）")
+    def expand(self, var_id: str, vtype: str, *, sess,
+               source_trust: Trust | None = None,
+               sensitivity: Clearance | None = None,
+               **kw) -> ExpandResult:
+        """受限展开（TR3/TR4）。
+
+        容量 ≤ 4 bit 且预算充足 → BOUNDED（t_eff 降，t_eff_ctl 不变）。
+        否则 → FULL（两者同降）。预算耗尽后受限展开退化为无界（I11 后半句）。
+        """
+        handle = self._by_var.get(var_id)
+        if handle is None:
+            raise KeyError(f"Unknown var_id: {var_id}")
+        bits = capacity_of(vtype, **kw)
+        src_trust = source_trust if source_trust is not None else handle.source_trust
+        sens = sensitivity if sensitivity is not None else handle.sensitivity
+
+        if bits <= BOUNDED_THRESHOLD_BITS and self._remaining() >= bits:
+            self._consume(bits)
+            mode = AbsorbMode.BOUNDED
+        else:
+            mode = AbsorbMode.FULL
+        sess.absorb(handle.chunk_id, sens, src_trust, mode=mode)
+        return ExpandResult(var_id=var_id, vtype=vtype, bits=bits, mode=mode,
+                            budget_remaining=self._remaining())
 
     def store(self, handle: VarHandle) -> None:
         self._by_var[handle.var_id] = handle

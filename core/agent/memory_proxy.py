@@ -106,10 +106,16 @@ class MemoryProxy:
         raise ValueError(f"Unknown constraint type: {constraint_type}")
 
     def can_invoke_tool(self, tool_name: str,
-                        action_fingerprint: str = "") -> Decision:
-        """Check whether the agent is allowed to invoke a tool via PDP."""
+                        action_fingerprint: str = "",
+                        provenance=None, arg_labels=None) -> Decision:
+        """Check whether the agent is allowed to invoke a tool via PDP.
+
+        provenance / arg_labels 一并传入，让 P-T-Provenance 与 Flow-Egress-Args
+        两条检查生效（F-02/F-03）。
+        """
         return self._pdp.can_invoke(
-            self.agent, self.session, tool_name, action_fingerprint)
+            self.agent, self.session, tool_name, action_fingerprint,
+            provenance=provenance, arg_labels=arg_labels)
 
     @property
     def t_eff(self) -> str:

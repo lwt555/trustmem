@@ -326,8 +326,8 @@ class TestPDPHideDecisions:
     def pdp(self, topo):
         return PDP(topo)
 
-    def test_blp_failure_returns_hide(self, pdp):
-        """When BLP fails, verdict is HIDE (can query, can't read)."""
+    def test_blp_failure_returns_hard_deny(self, pdp):
+        """BLP 失败是无读上硬拒绝（F-01），不可 HIDE."""
         agent = AgentLabel("analyst-1", Role.ANALYST, Clearance.L1_INTERNAL,
                            Trust.T2_MEDIUM, task_domain={"task-1"},
                            collab_group={"sec"}, epoch=1)
@@ -336,8 +336,9 @@ class TestPDPHideDecisions:
                           "task-1", collab_group={"sec"}, epoch=1)
         sess = Session.start("s", agent, "task-1")
         d = pdp.can_read(agent, mem, sess)
-        assert d.verdict == Verdict.HIDE
+        assert d.verdict == Verdict.DENY
         assert not d.allowed
+        assert d.hideable is False
         assert d.denied_by == "BLP-SimpleSecurity"
 
     def test_need_to_know_failure_returns_deny(self, pdp):
@@ -407,8 +408,8 @@ class TestPDPHideDecisions:
         assert d.verdict == Verdict.HIDE
         assert d.denied_by == "TaskScope-C"
 
-    def test_scoped_read_task_scope_t_deny(self, pdp):
-        """TaskScope-T failure returns DENY."""
+    def test_scoped_read_task_scope_t_hide(self, pdp):
+        """TaskScope-T 跌破可信下限 → HIDE（F-07）。"""
         agent = AgentLabel("analyst-1", Role.ANALYST, Clearance.L2_SENSITIVE,
                            Trust.T2_MEDIUM, task_domain={"task-1"},
                            collab_group={"sec"}, epoch=1)
@@ -418,7 +419,7 @@ class TestPDPHideDecisions:
         sess = Session.start("s", agent, "task-1")
         scope = TaskScope("task-1", Clearance.L3_SECRET, Trust.T3_HIGH)
         d = pdp.can_read_scoped(agent, mem, sess, scope)
-        assert d.verdict == Verdict.DENY
+        assert d.verdict == Verdict.HIDE
         assert d.denied_by == "TaskScope-T"
 
     def test_decision_explain_shows_verdict(self, pdp):
@@ -529,28 +530,32 @@ class TestPipelineHideIntegration:
                           collab_group={"sec"}, epoch=1)
 
     def test_read_l3_memory_as_l1_returns_hide(self, read_pipe, executor, mem_store):
-        """L1 executor reading L3 memory gets HIDE with VarHandle."""
-        mem = MemoryLabel("secret-42", Clearance.L3_SECRET, Trust.T3_HIGH,
+        """L1 executor reading beyond-scope memory gets HIDE with VarHandle."""
+        mem = MemoryLabel("secret-42", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", executor, "task-1")
-        result = read_pipe.read(agent=executor, session=sess, chunk_id="secret-42")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=executor, session=sess, chunk_id="secret-42",
+                                scope=scope)
 
         assert not result.allowed
         assert result.hidden
         assert result.var_handle is not None
-        assert result.var_handle.reason == "BLP-SimpleSecurity"
+        assert result.var_handle.reason == "TaskScope-C"
         assert "var-" in result.var_handle.var_id
 
     def test_hide_creates_var_handle_in_store(self, read_pipe, executor, mem_store):
         """HIDE result registers handle in VarStore."""
-        mem = MemoryLabel("sensitive", Clearance.L3_SECRET, Trust.T3_HIGH,
+        mem = MemoryLabel("sensitive", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", executor, "task-1")
-        result = read_pipe.read(agent=executor, session=sess, chunk_id="sensitive")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=executor, session=sess, chunk_id="sensitive",
+                                scope=scope)
 
         assert result.hidden
         stored = read_pipe.var_store.get(result.var_handle.var_id)
@@ -559,24 +564,27 @@ class TestPipelineHideIntegration:
 
     def test_hide_audits_decision(self, read_pipe, executor, mem_store, audit_store):
         """HIDE decisions are audited."""
-        mem = MemoryLabel("audit-h", Clearance.L3_SECRET, Trust.T3_HIGH,
+        mem = MemoryLabel("audit-h", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", executor, "task-1")
-        read_pipe.read(agent=executor, session=sess, chunk_id="audit-h")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        read_pipe.read(agent=executor, session=sess, chunk_id="audit-h", scope=scope)
 
         assert len(audit_store.events) == 1
         assert audit_store.events[0].verdict == Verdict.HIDE
 
     def test_hide_metadata_visible(self, read_pipe, executor, mem_store):
         """HIDE result exposes metadata in the var_handle."""
-        mem = MemoryLabel("meta-1", Clearance.L3_SECRET, Trust.T3_HIGH,
+        mem = MemoryLabel("meta-1", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", executor, "task-1")
-        result = read_pipe.read(agent=executor, session=sess, chunk_id="meta-1")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=executor, session=sess, chunk_id="meta-1",
+                                scope=scope)
 
         meta = result.var_handle.metadata
         assert meta["sensitivity"] is not None
@@ -584,12 +592,14 @@ class TestPipelineHideIntegration:
         assert meta["layer"] == "C"
 
     def test_hide_explain_output(self, read_pipe, executor, mem_store):
-        mem = MemoryLabel("explain-h", Clearance.L3_SECRET, Trust.T3_HIGH,
+        mem = MemoryLabel("explain-h", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", executor, "task-1")
-        result = read_pipe.read(agent=executor, session=sess, chunk_id="explain-h")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=executor, session=sess, chunk_id="explain-h",
+                                scope=scope)
 
         explanation = result.explain()
         assert "HIDE" in explanation
@@ -611,14 +621,16 @@ class TestPipelineHideIntegration:
     def test_var_store_accumulates_multiple_hides(self, read_pipe, executor, mem_store):
         """Multiple HIDE reads create distinct handles."""
         for i in range(3):
-            mem = MemoryLabel(f"hide-{i}", Clearance.L3_SECRET, Trust.T3_HIGH,
+            mem = MemoryLabel(f"hide-{i}", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                               Layer.CONCLUSION, MemoryType.INTEL, "analyst-1",
                               "task-1", collab_group={"sec"}, epoch=1)
             mem_store.put(mem)
 
         sess = Session.start("s", executor, "task-1")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
         for i in range(3):
-            result = read_pipe.read(agent=executor, session=sess, chunk_id=f"hide-{i}")
+            result = read_pipe.read(agent=executor, session=sess, chunk_id=f"hide-{i}",
+                                    scope=scope)
             assert result.hidden
             assert result.var_handle.chunk_id == f"hide-{i}"
 
@@ -668,15 +680,17 @@ class TestEndToEndHidePath:
         read_pipe = ReadPipeline(pdp, crypto, mem_store, audit_store)
         var_store = read_pipe.var_store
 
-        # 1. Store L3 memory (simulating a planner write)
-        mem = MemoryLabel("top-secret-1", Clearance.L3_SECRET, Trust.T3_HIGH,
+        # 1. Store L1 memory (simulating a planner write)
+        mem = MemoryLabel("top-secret-1", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "planner-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
 
-        # 2. Retriever tries to read → gets HIDE
+        # 2. Retriever tries to read under a scope capped at L0 → gets HIDE
         sess = Session.start("s", retriever, "task-1")
-        result = read_pipe.read(agent=retriever, session=sess, chunk_id="top-secret-1")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=retriever, session=sess, chunk_id="top-secret-1",
+                                scope=scope)
 
         assert result.hidden
         assert result.var_handle is not None
@@ -709,13 +723,15 @@ class TestEndToEndHidePath:
         read_pipe = ReadPipeline(pdp, crypto, mem_store, audit_store)
         var_store = read_pipe.var_store
 
-        mem = MemoryLabel("secret", Clearance.L3_SECRET, Trust.T3_HIGH,
+        mem = MemoryLabel("secret", Clearance.L1_INTERNAL, Trust.T3_HIGH,
                           Layer.CONCLUSION, MemoryType.INTEL, "planner-1",
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
 
         sess = Session.start("s", retriever, "task-1")
-        result = read_pipe.read(agent=retriever, session=sess, chunk_id="secret")
+        scope = TaskScope("task-1", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=retriever, session=sess, chunk_id="secret",
+                                scope=scope)
         var_id = result.var_handle.var_id
 
         isolated_llm = StubIsolatedLLM(var_store)

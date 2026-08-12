@@ -104,14 +104,17 @@ class CryptoEngine:
         """Encrypt with an explicit policy string."""
         return abe_encrypt(self.abe_pk, content, policy)
 
-    def decrypt_memory(self, agent: AgentLabel, ct: Ciphertext | None) -> tuple[bytes | None, str]:
+    def decrypt_memory(self, agent: AgentLabel, ct: Ciphertext | bytes | None) -> tuple[bytes | None, str]:
         """
         Attempt to decrypt a CP-ABE ciphertext using the agent's attribute key.
 
-        Returns (plaintext_bytes, audit_reason).
+        Accepts either a Ciphertext object or its serialized bytes form
+        (as persisted by the memory store). Returns (plaintext_bytes, audit_reason).
         """
         if ct is None:
             return b"[stub-plaintext]", "[STUB] no ciphertext (demo mode)"
+        if isinstance(ct, (bytes, bytearray)):
+            ct = Ciphertext.from_bytes(bytes(ct))
         key = self._agent_keys.get(agent.agent_id)
         if key is None:
             reason = f"[DENY] Agent {agent.agent_id} 未注册属性密钥"

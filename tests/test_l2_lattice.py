@@ -90,7 +90,7 @@ def test_t_eff_monotonicity():
     trusts = list(Trust)
     for i in range(20):
         t = random.choice(trusts)
-        sess.absorb(f"chunk_{i}", t)
+        sess.absorb(f"chunk_{i}", Clearance.L0_PUBLIC, t)
         curr = int(sess.t_eff)
         history.append(curr)
         assert curr <= prev, f"Step {i}: t_eff went from {prev} to {curr} (not monotonically non-increasing)"
@@ -105,7 +105,7 @@ def test_reset_restores_t_intrinsic():
     agent = AgentLabel(agent_id="a_test", role=Role.ANALYST,
                        clearance=Clearance.L2_SENSITIVE, trust_intrinsic=Trust.T3_HIGH)
     sess = Session.start("sess_test", agent, "task_test")
-    sess.absorb("chunk_dirty", Trust.T0_UNTRUSTED)
+    sess.absorb("chunk_dirty", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
     assert sess.t_eff == Trust.T0_UNTRUSTED
     sess.reset()
     assert sess.t_eff == Trust.T3_HIGH, f"Reset: expected T3, got {sess.t_eff}"
@@ -120,9 +120,9 @@ def test_c_eff_present():
                        clearance=Clearance.L2_SENSITIVE, trust_intrinsic=Trust.T3_HIGH)
     sess = Session.start("sess_c", agent, "task_test")
     assert sess.c_eff == Clearance.L0_PUBLIC, f"Initial c_eff should be L0, got {sess.c_eff}"
-    sess.absorb_c(Clearance.L2_SENSITIVE)
-    assert sess.c_eff == Clearance.L2_SENSITIVE, f"After absorb_c(L2), c_eff should be L2, got {sess.c_eff}"
-    sess.absorb_c(Clearance.L1_INTERNAL)
+    sess.absorb("chunk_l2", Clearance.L2_SENSITIVE, Trust.T3_HIGH)
+    assert sess.c_eff == Clearance.L2_SENSITIVE, f"After absorb(L2), c_eff should be L2, got {sess.c_eff}"
+    sess.absorb("chunk_l1", Clearance.L1_INTERNAL, Trust.T3_HIGH)
     assert sess.c_eff == Clearance.L2_SENSITIVE, f"c_eff should be monotonic (max), got {sess.c_eff}"
     sess.reset()
     assert sess.c_eff == Clearance.L0_PUBLIC, f"After reset, c_eff should be L0, got {sess.c_eff}"
@@ -136,10 +136,10 @@ def test_t_eff_ctl_present():
                        clearance=Clearance.L2_SENSITIVE, trust_intrinsic=Trust.T3_HIGH)
     sess = Session.start("sess_ctl", agent, "task_test")
     assert sess.t_eff_ctl == Trust.T3_HIGH, f"Initial t_eff_ctl should be T3, got {sess.t_eff_ctl}"
-    sess.degrade_ctl(Trust.T1_LOW)
-    assert sess.t_eff_ctl == Trust.T1_LOW, f"After degrade_ctl(T1), t_eff_ctl should be T1, got {sess.t_eff_ctl}"
-    sess.degrade_ctl(Trust.T0_UNTRUSTED)
-    assert sess.t_eff_ctl == Trust.T0_UNTRUSTED, f"After degrade_ctl(T0), t_eff_ctl should be T0, got {sess.t_eff_ctl}"
+    sess.absorb("chunk_t1", Clearance.L0_PUBLIC, Trust.T1_LOW)  # FULL → t_eff_ctl ↓
+    assert sess.t_eff_ctl == Trust.T1_LOW, f"After FULL absorb(T1), t_eff_ctl should be T1, got {sess.t_eff_ctl}"
+    sess.absorb("chunk_t0", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
+    assert sess.t_eff_ctl == Trust.T0_UNTRUSTED, f"After FULL absorb(T0), t_eff_ctl should be T0, got {sess.t_eff_ctl}"
     sess.reset()
     assert sess.t_eff_ctl == Trust.T3_HIGH, f"After reset, t_eff_ctl should be T3, got {sess.t_eff_ctl}"
 
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     tests = [
         test_clearance_ordering, test_trust_ordering, test_partial_order_4x4x4x4,
         test_join_operation, test_bottom_top, test_t_eff_monotonicity,
-        test_reset_restores_t_intrinsic, test_c_eff_missing, test_t_eff_ctl_missing,
+        test_reset_restores_t_intrinsic, test_c_eff_present, test_t_eff_ctl_present,
     ]
     passed = 0
     failed = 0
