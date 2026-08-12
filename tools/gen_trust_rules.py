@@ -120,8 +120,20 @@ A/B/C 三组各覆盖一个，D 组是 A+B 在跨主体边界上的复合。
 """
 
 
+def render_anchor_events() -> str:
+    from core.merkle import DESIGN_EVENT_TYPES
+    rows = "\n".join(f"| {t} |" for t in DESIGN_EVENT_TYPES)
+    return (
+        "## 五、13 类锚定事件（F-18 / 设计文档 §3.7）\n\n"
+        "Merkle 审计树的事件类型必须与设计文档点名清单完全一致；"
+        "未映射的裁决一律抛错，绝不静默回退成 CONSULT。\n\n"
+        f"| EventType |\n|---|\n{rows}\n"
+    )
+
+
 def render_doc() -> str:
-    return HEADER + "\n" + render_tables().rstrip() + "\n\n---\n\n" + ARGUMENT
+    return (HEADER + "\n" + render_tables().rstrip() + "\n\n---\n\n"
+            + ARGUMENT.rstrip() + "\n\n---\n\n" + render_anchor_events())
 
 
 def check() -> int:

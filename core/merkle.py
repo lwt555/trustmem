@@ -34,20 +34,35 @@ def _node_hash(left: bytes, right: bytes) -> bytes:
 # ──────────────────────────────────────────────────────────────
 
 
+# 设计文档 §3.7 点名的 13 类事件（权威清单）。EventType 必须与此完全一致。
+DESIGN_EVENT_TYPES: tuple[str, ...] = (
+    "READ_ALLOW",
+    "READ_HIDE",
+    "READ_DENY",
+    "WRITE_ALLOW",
+    "WRITE_DENY",
+    "TOOL_INVOKE",
+    "TOOL_DENY",
+    "TRUST_UPGRADE",
+    "DECLASSIFY",
+    "HITL_CONFIRM",
+    "SIGNKEY_BIND",
+    "MANIFEST_COMMIT",
+    "CONSULT",
+)
+
+
 class EventType(str, Enum):
     WRITE_ALLOW = "WRITE_ALLOW"
     WRITE_DENY = "WRITE_DENY"
     READ_ALLOW = "READ_ALLOW"
     READ_HIDE = "READ_HIDE"
     READ_DENY = "READ_DENY"
-    TRUST_DECAY = "TRUST_DECAY"
-    LOMAC = "LOMAC"
     TOOL_INVOKE = "TOOL_INVOKE"
     TOOL_DENY = "TOOL_DENY"
     HITL_CONFIRM = "HITL_CONFIRM"
     DECLASSIFY = "DECLASSIFY"
     CONSULT = "CONSULT"
-    EPOCH_CHANGE = "EPOCH_CHANGE"
     TRUST_UPGRADE = "TRUST_UPGRADE"
     MANIFEST_COMMIT = "MANIFEST_COMMIT"
     SIGNKEY_BIND = "SIGNKEY_BIND"
@@ -487,12 +502,19 @@ _EVENT_MAP: dict[tuple[str, bool, str | None], EventType] = {
 
 
 def _decision_to_event_type(decision: Decision) -> EventType:
-    """Map a PDP Decision to the most specific Merkle EventType."""
+    """Map a PDP Decision to the most specific Merkle EventType.
+
+    未映射的裁决直接抛错（F-18）：绝不允许静默回退成 CONSULT，
+    否则审计链会把未知裁决记成"查阅"，证据链不可信。
+    """
     from .verdict import Verdict
     if decision.action.startswith("INVOKE"):
         return EventType.TOOL_INVOKE if decision.allowed else EventType.TOOL_DENY
     key = (decision.action, decision.allowed, decision.denied_by)
-    return _EVENT_MAP.get(key, EventType.CONSULT)
+    ev = _EVENT_MAP.get(key)
+    if ev is None:
+        raise ValueError(f"未映射的裁决类型: {key}，请补充 _EVENT_MAP")
+    return ev
 
 
 class MerkleAuditStore:

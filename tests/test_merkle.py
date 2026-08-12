@@ -468,8 +468,8 @@ class TestMerkleStore:
         store = MerkleStore()
         store.log(self._event("ev-1", EventType.WRITE_ALLOW))
         store.log(self._event("ev-2", EventType.READ_HIDE))
-        store.log(self._event("ev-3", EventType.TRUST_DECAY))
-        store.log(self._event("ev-4", EventType.LOMAC))
+        store.log(self._event("ev-3", EventType.DECLASSIFY))
+        store.log(self._event("ev-4", EventType.HITL_CONFIRM))
         store.flush()
 
         for eid in ["ev-1", "ev-2", "ev-3", "ev-4"]:

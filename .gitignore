@@ -48,6 +48,7 @@ keys/*
 
 .claude/plans/
 .scratch/
+chain/anchor_log.jsonl
 *.db
 *.png
 *.jpg

@@ -99,3 +99,25 @@ A/B/C 三组各覆盖一个，D 组是 A+B 在跨主体边界上的复合。
 | 处理数据是否改变完整性 | 不变（主体处理数据不改变完整性） | LLM 会幻觉，过程本身计入衰减 δ(op)（TR8） |
 | δ=0 声明 | 无校验 | VERBATIM/EXTRACT 必须可验证，失败降 INFER（TR7） |
 | 完整性提升 | 无 | 唯一上升通道：背书门（TR11–TR14），抗 Sybil、可上链 |
+
+---
+
+## 五、13 类锚定事件（F-18 / 设计文档 §3.7）
+
+Merkle 审计树的事件类型必须与设计文档点名清单完全一致；未映射的裁决一律抛错，绝不静默回退成 CONSULT。
+
+| EventType |
+|---|
+| READ_ALLOW |
+| READ_HIDE |
+| READ_DENY |
+| WRITE_ALLOW |
+| WRITE_DENY |
+| TOOL_INVOKE |
+| TOOL_DENY |
+| TRUST_UPGRADE |
+| DECLASSIFY |
+| HITL_CONFIRM |
+| SIGNKEY_BIND |
+| MANIFEST_COMMIT |
+| CONSULT |
