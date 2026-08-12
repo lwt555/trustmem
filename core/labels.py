@@ -133,6 +133,7 @@ class MemoryLabel:
     epoch: int = 0
     declassified: bool = False      # 是否经受控降密网关放行
     ttl_end: datetime | None = None
+    upgraded_from: str | None = None  # F-19：提升不改原件，指向被提升的原 chunk_id
 
     def in_ttl(self, now: datetime | None = None) -> bool:
         if self.ttl_end is None:

@@ -122,7 +122,8 @@ check("TR13: 无密码学验签不得提升", not r2.applied,
 
 print("\n########## 11. STRUCTURAL / LOCAL 提升是否可被调用方自证 ##########")
 mm3 = mk_mem("m11", Clearance.L0_PUBLIC, Trust.T0_UNTRUSTED)
-r3 = up.try_upgrade(mm3, Evidence(etype=EvidenceType.STRUCTURAL, validator="随便", validated=True))
+r3 = up.try_upgrade(mm3, Evidence(etype=EvidenceType.STRUCTURAL, validator="随便"),
+                    content="随便")
 check("TR12: 结构校验必须由系统执行而非入参声明", not r3.applied,
       f"调用方传 validated=True 即提升 -> applied={r3.applied}")
 
