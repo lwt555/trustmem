@@ -35,6 +35,7 @@ from .topology import Topology
 from .trust_rules import trust_rule
 from .decay import compute_trust, DecayResult
 from .verdict import Verdict
+from manifest.capability import capability_level, CapabilityLevel
 
 
 # 硬拒绝规则集：命中即无条件 DENY，不可 HIDE（I1/I2/I10 + 时间/版本/生命周期）
@@ -386,12 +387,6 @@ class PDP:
         else:
             ck.append(Check("P-T-Provenance", True, "无 provenance 参数"))
 
-        need_hitl = tool in TOOL_REQUIRE_HITL
-        ok_hitl = (not need_hitl) or sess.has_hitl(action_fingerprint)
-        ck.append(Check("HumanInTheLoop", ok_hitl,
-                        "无需人在环" if not need_hitl
-                        else ("已获人工确认" if ok_hitl else "高危动作缺人工确认")))
-
         # P-F：出口约束（方向修正 F-02：c_eff ⊑ readers）
         if tool in EGRESS_TOOLS:
             readers = EGRESS_READERS.get(tool)
@@ -407,6 +402,28 @@ class PDP:
                                 f"max(arg sensitivity)({fmt(max_sens)}) ⊑ readers({fmt(readers)})"))
         else:
             ck.append(Check("Flow-Egress", True, "非出口工具，仅传播标签"))
+
+        # 系统级能力：需显式授权，未授权一律 DENY（fail-closed，F-16）。
+        level = capability_level(tool)
+        if level is CapabilityLevel.SYSTEM:
+            ck.append(Check("SystemCapability", False, "系统级能力需显式授权"))
+            return Decision(Verdict.DENY, f"INVOKE({tool})", agent.agent_id,
+                            action_fingerprint or tool, ck,
+                            denied_by="SystemCapability", session_id=sess.session_id)
+
+        # 高危能力：硬门全过但缺 HITL → CONFIRM（四值裁决落地，F-16）。
+        need_hitl = level is CapabilityLevel.DANGEROUS
+        ok_hitl = (not need_hitl) or sess.has_hitl(action_fingerprint)
+        ck.append(Check("HumanInTheLoop", ok_hitl,
+                        "无需人在环" if not need_hitl
+                        else ("已获人工确认" if ok_hitl else "高危动作缺人工确认")))
+
+        hard_ok = all(c.passed for c in ck if c.rule != "HumanInTheLoop")
+        if need_hitl and hard_ok and not ok_hitl:
+            return Decision(Verdict.CONFIRM, f"INVOKE({tool})", agent.agent_id,
+                            action_fingerprint or tool, ck,
+                            denied_by="HumanInTheLoop", hideable=False,
+                            session_id=sess.session_id)
 
         allowed = all(c.passed for c in ck)
         verdict = Verdict.ALLOW if allowed else Verdict.DENY

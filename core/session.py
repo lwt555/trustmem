@@ -63,7 +63,7 @@ class Session:
     t_eff: Trust
     t_intrinsic: Trust
     reads: list[ReadRecord] = field(default_factory=list)
-    hitl_confirmations: set[str] = field(default_factory=set)
+    hitl_confirmations: frozenset[str] = field(default_factory=frozenset)
     consulted: set[str] = field(default_factory=set)
     # BLP confidentiality high-watermark — rises on read (max), constrains write-down
     c_eff: Clearance = Clearance.L0_PUBLIC
@@ -132,11 +132,12 @@ class Session:
         self.t_eff_ctl = self.t_intrinsic
         self.capacity_used_bits = 0.0
         self.reads.clear()
-        self.hitl_confirmations.clear()
+        self.hitl_confirmations = frozenset()
         self.consulted.clear()
 
     def add_hitl(self, action_fingerprint: str) -> None:
-        self.hitl_confirmations.add(action_fingerprint)
+        # F-16：hitl_confirmations 是只读 frozenset，只能经此方法写入。
+        self.hitl_confirmations = self.hitl_confirmations | {action_fingerprint}
 
     def has_hitl(self, action_fingerprint: str) -> bool:
         return action_fingerprint in self.hitl_confirmations

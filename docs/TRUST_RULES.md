@@ -27,7 +27,7 @@ TrustMem 的可信流转建立在两条偏序格上：
 | ID | 触发事件 | 变化 | 依据 | 代码位置 |
 |---|---|---|---|---|
 | TR1 | LEARN 模式读入一条低可信记忆 | t_eff ← min(t_eff, T(m)) 只降不升；c_eff ← max(c_eff, L(m)) 只升不降 | LOMAC 低水位（Fraser, IEEE S&P 2000） | `core/session.py:85` |
-| TR2 | CONSULT 模式读入，或 LEARN 读入超出任务区间 | 裁决 HIDE，c_eff / t_eff / t_eff_ctl 完全不变 | 隐藏中立性 I8 | `core/pdp.py:199` |
+| TR2 | CONSULT 模式读入，或 LEARN 读入超出任务区间 | 裁决 HIDE，c_eff / t_eff / t_eff_ctl 完全不变 | 隐藏中立性 I8 | `core/pdp.py:200` |
 | TR3 | 受限展开（bool/enum/number，容量 ≤ 4 bit 且预算充足） | t_eff 下降，t_eff_ctl 不变 | 受限展开（隔离 LLM 的控制流水位不受影响） | `core/varstore.py:101` |
 | TR4 | 无界展开（string，或预算耗尽退化） | t_eff 与 t_eff_ctl 一起下降 | 无界展开（数据流与控制流同时被污染） | `core/varstore.py:101` |
 | TR5 | 会话结束 reset() | t_eff / t_eff_ctl 复位到 t_intrinsic，c_eff 复位 L0，容量预算清零 | 会话级隔离（会话结束语义） | `core/session.py:125` |
@@ -36,7 +36,7 @@ TrustMem 的可信流转建立在两条偏序格上：
 
 | ID | 触发事件 | 变化 | 依据 | 代码位置 |
 |---|---|---|---|---|
-| TR10 | CONSULT 读入的 chunk 出现在 input_mems | 直接 DENY，不进入衰减计算 | CONSULT 禁写回 I14 | `core/pdp.py:255` |
+| TR10 | CONSULT 读入的 chunk 出现在 input_mems | 直接 DENY，不进入衰减计算 | CONSULT 禁写回 I14 | `core/pdp.py:256` |
 | TR6 | 写出一条新记忆 | trust_out ≤ meet(输入集合, 主体 t_eff)，取最弱一环，不是 max / 均值 | Biba 无写上（no write up） | `core/decay.py:94` |
 | TR7 | 声明 δ=0 的操作（VERBATIM / EXTRACT）但校验失败 | op 强制降为 INFER（δ=1），可信度再降一级 | 谎报降级（δ=0 声明必须可验证） | `core/decay.py:64` |
 | TR8 | LLM 加工一条输入（SUMMARIZE / INFER / FUSE） | trust_out 额外减去 δ(op) | 加工衰减（LLM 过程本身引入不确定性） | `core/decay.py:94` |
@@ -55,7 +55,7 @@ TrustMem 的可信流转建立在两条偏序格上：
 
 | ID | 触发事件 | 变化 | 依据 | 代码位置 |
 |---|---|---|---|---|
-| TR15 | 委派创建子会话（跨主体边界） | t_eff_child ← min(t_eff_parent, t_intrinsic_child)；区间只能更紧 | 委派继承只紧不松（§3.6） | `core/session.py:185` |
+| TR15 | 委派创建子会话（跨主体边界） | t_eff_child ← min(t_eff_parent, t_intrinsic_child)；区间只能更紧 | 委派继承只紧不松（§3.6） | `core/session.py:186` |
 | TR16 | 记忆跨主体传播（写入即定标） | provenance_trust 钉死在写时衰减值，不随写者固有可信度重置 | 跨主体边界复合（A 组读入 + B 组写出在边界上复合） | `core/pipeline.py:169` |
 
 ---
