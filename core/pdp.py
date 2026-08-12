@@ -14,11 +14,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .labels import (
     AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role, WriteOp, IngestMode,
-    TaskScope, TOOL_REQUIRED_TRUST, TOOL_REQUIRE_HITL, fmt,
+    TaskScope, TOOL_REQUIRED_TRUST, TOOL_REQUIRE_HITL, EGRESS_TOOLS, EGRESS_READERS, fmt,
 )
 from .session import Session
 from .topology import Topology
@@ -45,7 +45,7 @@ class Decision:
     checks: list[Check] = field(default_factory=list)
     side_effect: str | None = None
     denied_by: str | None = None
-    at: datetime = field(default_factory=datetime.utcnow)
+    at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: str = ""
 
     @property
@@ -110,7 +110,7 @@ class PDP:
         self, agent: AgentLabel, mem: MemoryLabel, sess: Session,
         now: datetime | None = None, epoch_current: int | None = None,
     ) -> Decision:
-        now = now or datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
         ck: list[Check] = []
 
         # BLP 简单安全特性：no read up
@@ -153,11 +153,15 @@ class PDP:
                      session_id=sess.session_id)
         if verdict == Verdict.ALLOW:
             rec = sess.absorb(mem.chunk_id, mem.provenance_trust)
+            sess.absorb_c(mem.sensitivity)
+            side_lines = []
             if rec.t_eff_after < rec.t_eff_before:
-                d.side_effect = (f"低水位触发: T_eff({agent.agent_id}) "
+                side_lines.append(f"低水位触发: T_eff({agent.agent_id}) "
                                  f"{fmt(rec.t_eff_before)} -> {fmt(rec.t_eff_after)}")
             else:
-                d.side_effect = f"T_eff({agent.agent_id}) 保持 {fmt(sess.t_eff)}"
+                side_lines.append(f"T_eff({agent.agent_id}) 保持 {fmt(sess.t_eff)}")
+            side_lines.append(f"c_eff({agent.agent_id}) = {fmt(sess.c_eff)}")
+            d.side_effect = " | ".join(side_lines)
         else:
             d.denied_by = next(c.rule for c in ck if not c.passed)
         return d
@@ -188,12 +192,15 @@ class PDP:
 
         # Ingest-Mode 检查
         if scope.ingest == IngestMode.CONSULT:
-            # CONSULT: 所有读取标记为 consulted，不进低水位
+            # CONSULT: 所有读取一律走 VarStore（哪怕在区间内），不进低水位
             sess.consult(mem.chunk_id)
             d.checks.append(Check("Ingest-Mode",
                 True,
-                f"CONSULT模式: {mem.chunk_id} 已标记为查阅（不进长期溯源链）"))
+                f"CONSULT模式: {mem.chunk_id} 走VarStore句柄（不进长期溯源链）"))
             d.side_effect = (d.side_effect or "") + f" [CONSULT: {mem.chunk_id}]"
+            # CONSULT 永不暴露原始内容 — 通过 VarStore 隔离查询
+            if d.verdict == Verdict.ALLOW:
+                d.verdict = Verdict.HIDE
         else:
             d.checks.append(Check("Ingest-Mode",
                 True,
@@ -249,7 +256,11 @@ class PDP:
         if target_sensitivity >= agent.clearance:
             ok_blp, why = True, f"sensitivity({fmt(target_sensitivity)}) >= clearance({fmt(agent.clearance)})"
         elif target_layer == Layer.DIRECTIVE and declassify_approved:
-            ok_blp, why = True, "D层受控降密网关ALLOW（已上链存证）"
+            declassify_fp = f"declassify:{agent.agent_id}:{fmt(target_sensitivity)}"
+            if sess.has_hitl(declassify_fp):
+                ok_blp, why = True, "D层受控降密网关ALLOW（HITL已确认）"
+            else:
+                ok_blp, why = False, "D层降密需HITL确认（declassify_approved但无人在环记录）"
         else:
             gap = int(agent.clearance) - int(target_sensitivity)
             if gap > 2:
@@ -258,6 +269,13 @@ class PDP:
             else:
                 ok_blp, why = True, f"controlled write-down (gap={gap})"
         ck.append(Check("BLP-Star", ok_blp, why))
+
+        # C-Eff 写降密检查：读过的高密级内容禁止写入低密级容器
+        ok_c_eff = int(target_sensitivity) >= int(sess.c_eff)
+        ck.append(Check("C-Eff-WriteDown", ok_c_eff,
+            f"target sensitivity({fmt(target_sensitivity)}) >= c_eff({fmt(sess.c_eff)})"
+            if ok_c_eff else
+            f"c_eff 写降密拒绝: 已读取 {fmt(sess.c_eff)} 级内容，禁止写入 {fmt(target_sensitivity)} 级容器"))
 
         # 层级写入权
         ok_layer = not (target_layer == Layer.DIRECTIVE and not self.topo.children(agent.agent_id))
@@ -271,6 +289,12 @@ class PDP:
                      session_id=sess.session_id)
         if not allowed:
             d.denied_by = next(c.rule for c in ck if not c.passed)
+            # BLP 写降密或 C-Eff 写降密失败 → 统一加 NoWriteDown 标签
+            # 便于 A11 双规则日志识别：NoWriteDown + Egress/ProvenanceTrust
+            if not ok_blp or not ok_c_eff:
+                failed_writedown = [c.rule for c in ck
+                                    if not c.passed and c.rule in ("BLP-Star", "C-Eff-WriteDown")]
+                d.denied_by = f"NoWriteDown({' + '.join(failed_writedown)})"
         else:
             d.side_effect = f"新记忆标签: T={fmt(decay.trust_out)}, L={fmt(target_sensitivity)}, layer={target_layer.value}"
         return d, decay
@@ -306,6 +330,17 @@ class PDP:
         ck.append(Check("HumanInTheLoop", ok_hitl,
                         "无需人在环" if not need_hitl
                         else ("已获人工确认" if ok_hitl else "高危动作缺人工确认")))
+
+        if tool in EGRESS_TOOLS:
+            if tool in EGRESS_READERS:
+                req_cl = EGRESS_READERS[tool]
+                ok_egress = agent.clearance >= req_cl
+                ck.append(Check("EgressReader", ok_egress,
+                    f"出口 '{tool}' 要求 clearance >= {fmt(req_cl)}，"
+                    f"agent clearance={fmt(agent.clearance)}"))
+            else:
+                ck.append(Check("EgressReader", False,
+                    f"未登记出口工具 '{tool}' —— fail-closed 拒绝"))
 
         allowed = all(c.passed for c in ck)
         verdict = Verdict.ALLOW if allowed else Verdict.DENY

@@ -20,8 +20,8 @@ Endpoints:
 """
 from __future__ import annotations
 
-import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,25 +29,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from .schemas import (
     WriteRequest, WriteResponse,
     ReadRequest, ReadResponse, ReadManyRequest,
-    AuditEventInfo, MerkleProofInfo,
-    SessionReplayResponse, ChainVerificationResponse,
     SystemStats, StepMessage, StepResult, VarHandleInfo, AgentInfo,
     ScenarioRunRequest, ScenarioStatusResponse, AgentStatusResponse,
 )
 from .deps import (
     get_agents, get_session_store, get_var_store,
     get_merkle_audit, get_write_pipeline, get_read_pipeline, get_db_store,
-    get_llm, get_agent_builder, get_topology,
+    get_topology,
 )
 from core.labels import (
     Clearance, Trust, Layer, MemoryType, WriteOp, TaskScope, IngestMode,
-    fmt, meet_trust,
+    fmt,
 )
-from core.verdict import Verdict
-from core.agent.tools import ToolRegistry
-from scenarios.soc_setup import TOOL_REGISTRY
 from scenarios.scenario_registry import SCENARIOS
 from .ws_graph import handle_graph_ws
+from .audit import router as audit_router
 
 app = FastAPI(title="TrustMem API", version="1.0.0")
 
@@ -58,6 +54,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(audit_router)
 
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -104,19 +102,38 @@ def _parse_write_op(s: str) -> WriteOp:
         return WriteOp[s.upper()]
 
 
+def _build_task_scope(req) -> TaskScope | None:
+    """Extract TaskScope from a request if scope fields are present."""
+    if not req.scope_c_max and not req.scope_t_min:
+        return None
+    task_id = getattr(req, "task_id", None) or ""
+    ingest_str = getattr(req, "scope_ingest", None)
+    if ingest_str and ingest_str.upper() == "CONSULT":
+        ingest = IngestMode.CONSULT
+    else:
+        ingest = IngestMode.LEARN
+    return TaskScope(
+        task_id=task_id,
+        c_ctx_max=_parse_clearance(req.scope_c_max),
+        t_ctx_min=_parse_trust(req.scope_t_min),
+        ingest=ingest,
+    )
+
+
 def _format_checks(checks) -> list[dict]:
     return [{"rule": c.rule, "passed": c.passed, "detail": c.detail} for c in checks]
 
 
-def _audit_event_to_info(event) -> AuditEventInfo:
-    return AuditEventInfo(
-        event_id=event.event_id,
-        event_type=event.event_type.value,
-        subject=event.subject,
-        object=event.object,
-        session_id=event.session_id,
-        payload=event.payload,
-        at=event.at.isoformat(),
+def _build_var_info(result) -> VarHandleInfo | None:
+    if not result.var_handle:
+        return None
+    vh = result.var_handle
+    return VarHandleInfo(
+        var_id=vh.var_id,
+        placeholder=vh.placeholder,
+        reason=vh.reason,
+        constraint_types=list(vh.constraint_types),
+        metadata=vh.metadata,
     )
 
 
@@ -125,6 +142,40 @@ def _audit_event_to_info(event) -> AuditEventInfo:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/graph")
+def graph_http():
+    """HTTP fallback for graph topology.
+
+    Returns six topology nodes with visual encoding:
+    - fill depth = confidentiality (lighter=lower, darker=higher)
+    - border color = trust/integrity
+    """
+    from core.topology import Topology
+    topo = get_topology()
+    agents = get_agents()
+    nodes = []
+    for agent_id, agent in agents.items():
+        node_info = {
+            "agent_id": agent_id,
+            "role": agent.role.value,
+            "clearance": fmt(agent.clearance),
+            "trust": fmt(agent.trust_intrinsic),
+            "tools": list(agent.tool_scope),
+            "task_domain": list(agent.task_domain),
+        }
+        # 拓扑关系
+        ancestors = topo.ancestors(agent_id) if hasattr(topo, "ancestors") else []
+        descendants = topo.descendants(agent_id) if hasattr(topo, "descendants") else []
+        node_info["ancestors"] = ancestors
+        node_info["descendants"] = descendants
+        nodes.append(node_info)
+    # Topology edges
+    edges = []
+    if hasattr(topo, "edges"):
+        edges = topo.edges
+    return {"nodes": nodes, "edges": edges, "node_count": len(nodes)}
 
 
 @app.get("/api/stats", response_model=SystemStats)
@@ -175,15 +226,6 @@ def write(req: WriteRequest):
     input_mems = [pipe.mem_store.get(cid) for cid in req.input_chunk_ids]
     input_mems = [m for m in input_mems if m is not None]
 
-    scope = None
-    if req.scope_c_max or req.scope_t_min:
-        scope = TaskScope(
-            task_id=req.task_id or "",
-            c_ctx_max=_parse_clearance(req.scope_c_max),
-            t_ctx_min=_parse_trust(req.scope_t_min),
-            ingest=IngestMode.LEARN,
-        )
-
     result = pipe.write(
         agent=agent, session=session, content=req.content,
         target_sensitivity=_parse_clearance(req.sensitivity),
@@ -195,7 +237,7 @@ def write(req: WriteRequest):
         declassify_approved=req.declassify_approved,
         input_texts=req.input_texts,
         schema_ok=req.schema_ok,
-        scope=scope,
+        scope=_build_task_scope(req),
     )
 
     return WriteResponse(
@@ -226,27 +268,8 @@ def read(req: ReadRequest):
 
     session = store.get_or_start(req.session_id, agent, req.task_id or "unknown")
 
-    scope = None
-    if req.scope_c_max or req.scope_t_min:
-        scope = TaskScope(
-            task_id=req.task_id or "",
-            c_ctx_max=_parse_clearance(req.scope_c_max),
-            t_ctx_min=_parse_trust(req.scope_t_min),
-            ingest=IngestMode.LEARN,
-        )
-
-    result = pipe.read(agent=agent, session=session, chunk_id=req.chunk_id, scope=scope)
-
-    var_info = None
-    if result.var_handle:
-        vh = result.var_handle
-        var_info = VarHandleInfo(
-            var_id=vh.var_id,
-            placeholder=vh.placeholder,
-            reason=vh.reason,
-            constraint_types=list(vh.constraint_types),
-            metadata=vh.metadata,
-        )
+    result = pipe.read(agent=agent, session=session, chunk_id=req.chunk_id,
+                       scope=_build_task_scope(req))
 
     return ReadResponse(
         allowed=result.allowed,
@@ -254,7 +277,7 @@ def read(req: ReadRequest):
         decision_verdict=result.decision.verdict.value,
         denied_by=result.denied_by,
         chunk_id=req.chunk_id,
-        var_handle=var_info,
+        var_handle=_build_var_info(result),
         checks=_format_checks(result.checks),
         side_effects=result.side_effects,
         t_eff=fmt(session.t_eff) if result.allowed else None,
@@ -275,34 +298,15 @@ def read_many(req: ReadManyRequest):
 
     session = store.get_or_start(req.session_id, agent, req.task_id or "unknown")
 
-    scope = None
-    if req.scope_c_max or req.scope_t_min:
-        scope = TaskScope(
-            task_id=req.task_id or "",
-            c_ctx_max=_parse_clearance(req.scope_c_max),
-            t_ctx_min=_parse_trust(req.scope_t_min),
-            ingest=IngestMode.LEARN,
-        )
-
     results = pipe.read_many(agent=agent, session=session,
-                             chunk_ids=req.chunk_ids, scope=scope)
+                             chunk_ids=req.chunk_ids, scope=_build_task_scope(req))
     responses = []
     for r in results:
-        var_info = None
-        if r.var_handle:
-            vh = r.var_handle
-            var_info = VarHandleInfo(
-                var_id=vh.var_id,
-                placeholder=vh.placeholder,
-                reason=vh.reason,
-                constraint_types=list(vh.constraint_types),
-                metadata=vh.metadata,
-            )
         responses.append(ReadResponse(
             allowed=r.allowed, hidden=r.hidden,
             decision_verdict=r.decision.verdict.value,
             denied_by=r.denied_by, chunk_id=r.memory.chunk_id if r.memory else "",
-            var_handle=var_info, checks=_format_checks(r.checks),
+            var_handle=_build_var_info(r), checks=_format_checks(r.checks),
             side_effects=r.side_effects,
             t_eff=fmt(session.t_eff),
             t_eff_dropped=r.t_eff_dropped,
@@ -311,66 +315,7 @@ def read_many(req: ReadManyRequest):
     return responses
 
 
-# ── Audit ───────────────────────────────────────────────────
-
-@app.get("/api/audit/events/{event_id}", response_model=AuditEventInfo)
-def get_audit_event(event_id: str):
-    ma = get_merkle_audit()
-    evt = ma.get_event(event_id)
-    if evt is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Event not found")
-    return _audit_event_to_info(evt)
-
-
-@app.get("/api/audit/proof/{event_id}", response_model=MerkleProofInfo)
-def get_audit_proof(event_id: str):
-    ma = get_merkle_audit()
-    proof = ma.get_proof(event_id)
-    if proof is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Event not found")
-    return MerkleProofInfo(
-        leaf_hash=proof.leaf_hash.hex(),
-        root=proof.root.hex(),
-        leaf_index=proof.leaf_index,
-        siblings=[(h.hex(), side) for h, side in proof.siblings],
-        valid=proof.verify(),
-    )
-
-
-@app.get("/api/audit/session/{session_id}", response_model=SessionReplayResponse)
-def replay_session(session_id: str):
-    ma = get_merkle_audit()
-    events = ma.replay_session(session_id)
-    return SessionReplayResponse(
-        session_id=session_id,
-        total_events=len(events),
-        events=[_audit_event_to_info(e) for e in events],
-    )
-
-
-@app.get("/api/audit/chain/verify", response_model=ChainVerificationResponse)
-def verify_chain():
-    ma = get_merkle_audit()
-    result = ma.verify_chain()
-    return ChainVerificationResponse(
-        valid=result["valid"],
-        chain_length=result["chain_length"],
-        blocks=result["blocks"],
-    )
-
-
-@app.get("/api/audit/events")
-def list_audit_events(session_id: str | None = None, limit: int = 50):
-    ma = get_merkle_audit()
-    if session_id:
-        events = ma.replay_session(session_id)
-    else:
-        events = []
-    events = events[-limit:]
-    return {"events": [_audit_event_to_info(e) for e in events]}
-
+# ── Session ──────────────────────────────────────────────────
 
 @app.post("/api/session/flush")
 def flush_session():
@@ -454,14 +399,6 @@ async def ws_step(websocket: WebSocket):
                 session = store.get_or_start(sid, agent, p.get("task_id", "ws-task"))
                 result = read_pipe.read(agent=agent, session=session, chunk_id=p["chunk_id"])
 
-                var_info = None
-                if result.var_handle:
-                    vh = result.var_handle
-                    var_info = VarHandleInfo(
-                        var_id=vh.var_id, placeholder=vh.placeholder,
-                        reason=vh.reason, constraint_types=list(vh.constraint_types),
-                        metadata=vh.metadata,
-                    )
                 step = StepResult(
                     step_type="read", allowed=result.allowed,
                     hidden=result.hidden,
@@ -470,7 +407,7 @@ async def ws_step(websocket: WebSocket):
                     checks=_format_checks(result.checks),
                     side_effects=result.side_effects,
                     merkle_root=get_merkle_audit().root.hex(),
-                    var_handle=var_info,
+                    var_handle=_build_var_info(result),
                 )
 
             else:
@@ -496,6 +433,9 @@ async def ws_graph(websocket: WebSocket):
 
 # ── Scenario endpoints ───────────────────────────────────────
 
+_scenario_runs: dict[str, dict] = {}
+
+
 @app.get("/api/scenarios")
 def list_scenarios():
     """List available SOC scenarios."""
@@ -507,14 +447,48 @@ def list_scenarios():
 
 @app.post("/api/scenario/run", response_model=ScenarioStatusResponse)
 def run_scenario(req: ScenarioRunRequest):
-    """Start a scenario run (returns initial status; use /ws/graph for live events)."""
-    info = SCENARIOS.get(req.scenario_id, {"name": req.scenario_id})
+    """Start a scenario run. Returns a run_id for status polling and /ws/graph streaming."""
+    from fastapi import HTTPException
+    if req.scenario_id not in SCENARIOS:
+        raise HTTPException(status_code=404, detail=f"Unknown scenario: {req.scenario_id}")
+
+    run_id = uuid.uuid4().hex[:12]
+    info = SCENARIOS[req.scenario_id]
+    status = {
+        "scenario_id": req.scenario_id,
+        "name": info["name"],
+        "status": "ready",
+        "phase": "planner",
+        "current_agent": "",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "protection": req.protection,
+    }
+    _scenario_runs[run_id] = status
+
     return ScenarioStatusResponse(
         scenario_id=req.scenario_id,
-        name=info.get("name", req.scenario_id),
+        name=info["name"],
         status="ready",
         phase="planner",
         current_agent="",
+        run_id=run_id,
+    )
+
+
+@app.get("/api/scenario/status/{run_id}", response_model=ScenarioStatusResponse)
+def get_scenario_status(run_id: str):
+    """Get the current status of a scenario run."""
+    from fastapi import HTTPException
+    status = _scenario_runs.get(run_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return ScenarioStatusResponse(
+        scenario_id=status["scenario_id"],
+        name=status["name"],
+        status=status["status"],
+        phase=status["phase"],
+        current_agent=status.get("current_agent", ""),
+        run_id=run_id,
     )
 
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import itertools
 import random
 import sys, os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role,
@@ -108,7 +108,7 @@ def test_I4_no_write_up(trials=3000, seed=7):
     for _ in range(trials):
         agent = rnd.choice(list(AGENTS.values()))
         s = Session.start("t", agent, TASK)
-        s.t_eff = rnd.choice(list(Trust))
+        s.elevate(rnd.choice(list(Trust)))
         ins = [_mem(f"i{k}", Clearance.L0_PUBLIC, rnd.choice(list(Trust)),
                     Layer.CONCLUSION, "log") for k in range(rnd.randint(1, 3))]
         op = rnd.choice(list(WriteOp))
@@ -154,8 +154,8 @@ def test_I5_tainted_session_cannot_invoke_high_risk(trials=2000, seed=11):
 # ══════════════════════════════════════════════════════════════
 def test_I6_need_to_know():
     agent = AgentLabel("test", Role.ANALYST, Clearance.L3_SECRET, Trust.T3_HIGH,
-                       task_domain={"OTHER-TASK"}, ttl_start=datetime.utcnow(),
-                       ttl_end=datetime.utcnow() + timedelta(days=1), epoch=1)
+                       task_domain={"OTHER-TASK"}, ttl_start=datetime.now(timezone.utc),
+                       ttl_end=datetime.now(timezone.utc) + timedelta(days=1), epoch=1)
     mem = _mem("m", Clearance.L0_PUBLIC, Trust.T3_HIGH, Layer.CONCLUSION, "log")
     s = Session.start("t", agent, TASK)
     d = PDP_.can_read(agent, mem, s)
@@ -167,7 +167,7 @@ def test_I6_need_to_know():
 # 不变式 I7 · TTL：过期主体标签阻断所有操作
 # ══════════════════════════════════════════════════════════════
 def test_I7_ttl_blocks_read():
-    past = datetime.utcnow() - timedelta(days=10)
+    past = datetime.now(timezone.utc) - timedelta(days=10)
     expired = AgentLabel("exp", Role.ANALYST, Clearance.L3_SECRET, Trust.T3_HIGH,
                          task_domain={TASK},
                          ttl_start=past, ttl_end=past + timedelta(hours=1))
@@ -268,7 +268,7 @@ def test_I13_no_write_down_without_declassify():
     d, _ = PDP_.can_write(planner, s, Clearance.L0_PUBLIC, Layer.CONCLUSION,
                           [], WriteOp.VERBATIM)
     assert not d.allowed, "write-down of 3+ levels without declassify should be denied"
-    assert d.denied_by == "BLP-Star"
+    assert d.denied_by == "NoWriteDown(BLP-Star)"
 
 
 # ══════════════════════════════════════════════════════════════

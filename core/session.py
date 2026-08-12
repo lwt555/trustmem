@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .labels import AgentLabel, Trust
+from .labels import AgentLabel, Trust, Clearance
 
 
 @dataclass
@@ -50,11 +50,18 @@ class Session:
     reads: list[ReadRecord] = field(default_factory=list)
     hitl_confirmations: set[str] = field(default_factory=set)
     consulted: set[str] = field(default_factory=set)
+    # BLP confidentiality high-watermark — rises on read (max), constrains write-down
+    c_eff: Clearance = Clearance.L0_PUBLIC
+    c_intrinsic: Clearance = Clearance.L0_PUBLIC
+    # LLM isolation watermark — separate from Biba t_eff; drops on constrained queries only
+    t_eff_ctl: Trust = Trust.T3_HIGH
 
     @classmethod
     def start(cls, session_id: str, agent: AgentLabel, task_id: str) -> "Session":
         return cls(session_id=session_id, agent_id=agent.agent_id, task_id=task_id,
-                   t_eff=agent.trust_intrinsic, t_intrinsic=agent.trust_intrinsic)
+                   t_eff=agent.trust_intrinsic, t_intrinsic=agent.trust_intrinsic,
+                   c_eff=Clearance.L0_PUBLIC, c_intrinsic=agent.clearance,
+                   t_eff_ctl=agent.trust_intrinsic)
 
     def absorb(self, chunk_id: str, trust: Trust) -> ReadRecord:
         before = self.t_eff
@@ -63,11 +70,17 @@ class Session:
         self.reads.append(rec)
         return rec
 
+    def absorb_c(self, sensitivity: Clearance) -> None:
+        """BLP high-watermark: rise to highest sensitivity read this session."""
+        self.c_eff = Clearance(max(int(self.c_eff), int(sensitivity)))
+
     def consult(self, chunk_id: str) -> None:
         self.consulted.add(chunk_id)
 
     def reset(self) -> None:
         self.t_eff = self.t_intrinsic
+        self.c_eff = Clearance.L0_PUBLIC
+        self.t_eff_ctl = self.t_intrinsic
         self.reads.clear()
         self.hitl_confirmations.clear()
         self.consulted.clear()
@@ -78,13 +91,20 @@ class Session:
     def has_hitl(self, action_fingerprint: str) -> bool:
         return action_fingerprint in self.hitl_confirmations
 
-    def _elevate(self, new_trust: Trust) -> None:
+    def elevate(self, new_trust: Trust) -> None:
         self.t_eff = Trust(max(int(self.t_eff), int(new_trust)))
+
+    def degrade_ctl(self, trust: Trust) -> None:
+        """Degrade LLM isolation watermark after constrained query on low-trust content."""
+        self.t_eff_ctl = Trust(min(int(self.t_eff_ctl), int(trust)))
+
 
 
 class SessionStore:
     def __init__(self) -> None:
         self._s: dict[tuple[str, str], Session] = {}
+        self._capacity_used: dict[str, float] = {}     # session_id → used
+        self._capacity_budget: dict[str, float] = {}    # session_id → budget
 
     def get_or_start(self, session_id: str, agent: AgentLabel, task_id: str) -> Session:
         key = (session_id, agent.agent_id)
@@ -96,6 +116,7 @@ class SessionStore:
         for (sid, _), sess in list(self._s.items()):
             if sid == session_id:
                 sess.reset()
+        self.reset_ctl(session_id)
 
     def all_of(self, session_id: str) -> list[Session]:
         return [s for (sid, _), s in self._s.items() if sid == session_id]
@@ -103,3 +124,54 @@ class SessionStore:
     @property
     def count(self) -> int:
         return len({sid for (sid, _) in self._s})
+
+    def consume_ctl(self, session_id: str, cost: float = 1.0,
+                    source_trust: Trust | None = None) -> bool:
+        """Session-wide constrained-query budget. Returns False if exhausted."""
+        budget = self._capacity_budget.setdefault(session_id, 16.0)
+        used = self._capacity_used.setdefault(session_id, 0.0)
+        if used + cost > budget:
+            return False
+        self._capacity_used[session_id] = used + cost
+        if source_trust is not None:
+            for sess in self.all_of(session_id):
+                sess.degrade_ctl(source_trust)
+        return True
+
+    def reset_ctl(self, session_id: str) -> None:
+        self._capacity_used.pop(session_id, None)
+        self._capacity_budget.pop(session_id, None)
+
+    def delegate(self, parent_session_id: str, agent: "AgentLabel",
+                 child_task_id: str, child_session_id: str | None = None) -> "Session":
+        """创建子会话，继承父会话的 consulted、容量预算和水位。
+
+        §4 第 5 项抽查：子会话必须继承 consulted 集合，否则 I14 被绕开。
+        §4 第 8 项抽查：capacity_used 不许因 delegate 而重置。
+
+        父会话查找使用 all_of() 而非 _s.get((sid, aid))，确保不因 AgentLabel
+        实例不同而静默跳过继承。
+        """
+        child_sid = child_session_id or f"{parent_session_id}/{child_task_id}"
+        sess = self.get_or_start(child_sid, agent, child_task_id)
+
+        # 继承父会话的 consulted 集合和水位（防止 I14 绕开）
+        parent = None
+        for p in self.all_of(parent_session_id):
+            if p.agent_id == agent.agent_id:
+                parent = p
+                break
+        if parent is not None:
+            sess.consulted = set(parent.consulted)
+            sess.c_eff = parent.c_eff
+            sess.t_eff = parent.t_eff
+            sess.t_eff_ctl = parent.t_eff_ctl
+
+        # 继承容量预算（不许因 delegate 而重置）
+        p_used = self._capacity_used.get(parent_session_id, 0.0)
+        p_budget = self._capacity_budget.get(parent_session_id, 16.0)
+        if child_sid not in self._capacity_used:
+            self._capacity_used[child_sid] = p_used
+            self._capacity_budget[child_sid] = p_budget
+
+        return sess

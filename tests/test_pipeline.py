@@ -334,6 +334,7 @@ class TestWritePipeline:
     def test_write_declassify_approved(self, write_pipe, planner, session):
         """D-layer declassification must be approved via controlled gateway."""
         planner_sess = Session.start("s-p", planner, "task-1")
+        planner_sess.add_hitl("declassify:planner-1:L1")
         result = write_pipe.write(
             agent=planner, session=planner_sess,
             content="downward directive",
@@ -358,7 +359,7 @@ class TestWritePipeline:
             declassify_approved=False,
         )
         assert not result.allowed
-        assert result.denied_by == "BLP-Star"
+        assert result.denied_by == "NoWriteDown(BLP-Star)"
 
     def test_write_result_explain(self, write_pipe, analyst, session, intel_mem):
         result = write_pipe.write(
@@ -455,7 +456,7 @@ class TestReadPipeline:
         assert result.denied_by == "TaskScope-T"
 
     def test_read_with_consult_scope(self, read_pipe, analyst, session, mem_store):
-        """CONSULT scope marks chunks as consulted."""
+        """CONSULT scope returns HIDE and marks chunks as consulted."""
         mem = MemoryLabel(chunk_id="consult-me", sensitivity=Clearance.L0_PUBLIC,
                           provenance_trust=Trust.T2_MEDIUM, layer=Layer.CONCLUSION,
                           memory_type=MemoryType.INTEL, owner_agent="retriever-1",
@@ -466,7 +467,7 @@ class TestReadPipeline:
                           ingest=IngestMode.CONSULT)
         result = read_pipe.read(agent=analyst, session=session, chunk_id="consult-me",
                                scope=scope)
-        assert result.allowed
+        assert result.hidden, "CONSULT should return HIDE (VarStore)"
         assert "consult-me" in session.consulted
 
     def test_read_many(self, read_pipe, analyst, session, mem_store):

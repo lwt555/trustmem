@@ -16,7 +16,7 @@ TrustMem v2 · 标签本体与格结构
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import IntEnum, Enum
 from typing import Iterable
 
@@ -105,13 +105,13 @@ class AgentLabel:
     task_domain: set[str] = field(default_factory=set)
     collab_group: set[str] = field(default_factory=set)
     tool_scope: set[str] = field(default_factory=set)   # 来自工具注册表，非自我声明
-    ttl_start: datetime = field(default_factory=datetime.utcnow)
-    ttl_end: datetime = field(default_factory=lambda: datetime.utcnow() + timedelta(days=1))
+    ttl_start: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ttl_end: datetime = field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=1))
     prompt_hash: str = ""           # 系统提示词承诺，上链锚定
     epoch: int = 0                  # 属性版本号，权限变更即 +1，旧密钥失效
 
     def in_ttl(self, now: datetime | None = None) -> bool:
-        now = now or datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
         return self.ttl_start <= now <= self.ttl_end
 
 
@@ -137,7 +137,7 @@ class MemoryLabel:
     def in_ttl(self, now: datetime | None = None) -> bool:
         if self.ttl_end is None:
             return True
-        return (now or datetime.utcnow()) <= self.ttl_end
+        return (now or datetime.now(timezone.utc)) <= self.ttl_end
 
 
 # ──────────────────────────────────────────────────────────────
@@ -201,6 +201,47 @@ class TaskScope:
     c_ctx_max: Clearance
     t_ctx_min: Trust
     ingest: IngestMode = IngestMode.LEARN
+    scope_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.scope_hash:
+            self.scope_hash = self._compute_hash()
+
+    def _compute_hash(self) -> str:
+        import hashlib, json
+        payload = json.dumps({
+            "task_id": self.task_id,
+            "c_ctx_max": int(self.c_ctx_max),
+            "t_ctx_min": int(self.t_ctx_min),
+            "ingest": self.ingest.value,
+        }, sort_keys=True)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    def widen(self, new_c_max: Clearance, new_t_min: Trust,
+              claimed_hash: str) -> "TaskScope":
+        """扩展任务区间。claim_hash 必须匹配当前 scope_hash，否则拒绝扩展。
+
+        §4 第 6 项抽查：区间防篡改 — 攻击者注入"本任务也允许写外部"无法生效，
+        因为 hash 不匹配会直接抛异常。
+        """
+        if claimed_hash != self.scope_hash:
+            raise ValueError(
+                f"Scope hash mismatch: claimed={claimed_hash[:8]}..., "
+                f"actual={self.scope_hash}. 区间防篡改: 拒绝扩展。")
+        if new_c_max < self.c_ctx_max:
+            raise ValueError(
+                f"widen c_ctx_max must expand, not shrink: "
+                f"{fmt(new_c_max)} < {fmt(self.c_ctx_max)}")
+        if new_t_min > self.t_ctx_min:
+            raise ValueError(
+                f"widen t_ctx_min must expand, not shrink: "
+                f"{fmt(new_t_min)} > {fmt(self.t_ctx_min)}")
+        return TaskScope(
+            task_id=self.task_id,
+            c_ctx_max=new_c_max,
+            t_ctx_min=new_t_min,
+            ingest=self.ingest,
+        )
 
     def contains_c(self, sensitivity: Clearance) -> bool:
         return sensitivity <= self.c_ctx_max
@@ -225,6 +266,14 @@ EXPORT_TOOL_REQUIRED_TRUST: dict[str, Trust] = {
 
 # 网络出口工具 —— 一旦声明就会拉低 c_ctx_max
 EGRESS_TOOLS: set[str] = {"web_search", "intel_fetch", "api.external"}
+
+# 出口读者要求 —— 每个出口工具对 agent 密级的下限要求
+# Fail-closed: 在 EGRESS_TOOLS 中但不在 EGRESS_READERS 中的工具一律拒绝
+EGRESS_READERS: dict[str, Clearance] = {
+    "web_search": Clearance.L0_PUBLIC,
+    "intel_fetch": Clearance.L0_PUBLIC,
+    "api.external": Clearance.L1_INTERNAL,
+}
 
 
 def derive_taskscope(
