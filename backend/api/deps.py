@@ -5,7 +5,7 @@ In production these would be scoped to request; for the demo they are module-lev
 """
 from __future__ import annotations
 
-from functools import lru_cache
+import logging
 
 from backend.db.database import get_db
 from backend.db.store import TrustMemStore
@@ -20,8 +20,9 @@ from core.llm.factory import create_llm_backend
 from core.llm.base import LLMBackend
 from core.llm.stub import StubLLMBackend
 from core.agent.builder import AgentBuilder
-from core.agent.tools import ToolRegistry
 from scenarios.soc_setup import build_agents, build_topology
+
+_log = logging.getLogger(__name__)
 
 
 # ── Bootstrap (runs once on import) ─────────────────────────
@@ -63,6 +64,7 @@ def _create_llm_on_demand() -> LLMBackend:
         try:
             _llm = create_llm_backend()
         except Exception:
+            _log.warning("Failed to create LLM backend, falling back to stub", exc_info=True)
             _llm = StubLLMBackend()
     return _llm
 

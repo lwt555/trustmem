@@ -1,20 +1,15 @@
 """Tests for Agent runtime — ToolRegistry, MemoryProxy, AgentRuntime."""
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 from core.labels import (
-    AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role, MemoryType,
+    MemoryLabel, Clearance, Trust, Layer, Role, MemoryType,
     WriteOp, TaskScope, IngestMode, fmt,
 )
-from core.topology import Topology
-from core.pdp import PDP
 from core.session import Session, SessionStore
 from core.verdict import Verdict
-from core.varstore import VarStore
 from core.pipeline import WritePipeline, ReadPipeline
-from core.merkle import MerkleAuditStore
 from core.isolated_llm import StubIsolatedLLM, ControlFlowBudget
-from core.crypto.engine import CryptoEngine
 from core.agent.tools import ToolRegistry, ToolDefinition, ToolResult
 from core.agent.memory_proxy import MemoryProxy
 from core.agent.runtime import AgentRuntime, AgentStep
@@ -23,67 +18,17 @@ from unittest.mock import MagicMock
 
 from core.llm.stub import StubLLMBackend
 
-
-@pytest.fixture
-def topo():
-    t = Topology()
-    t.add_agent("planner")
-    for child in ("intel", "log", "analyst", "executor"):
-        t.add_agent(child, parent="planner")
-    t.add_agent("auditor")
-    return t
-
-
-@pytest.fixture
-def pdp(topo):
-    return PDP(topo)
-
-
-@pytest.fixture
-def crypto(topo):
-    return CryptoEngine(topo)
-
-
-@pytest.fixture
-def mem_store():
-    class MemStore:
-        def __init__(self):
-            self._m = {}
-        def put(self, mem):
-            self._m[mem.chunk_id] = mem
-        def get(self, cid):
-            return self._m.get(cid)
-        def list_active(self):
-            return list(self._m.values())
-        def list_by_task(self, tid):
-            return [m for m in self._m.values() if m.task_binding == tid]
-    return MemStore()
-
-
-@pytest.fixture
-def audit():
-    return MerkleAuditStore(block_size=64)
+from tests.helpers import make_agent_label
 
 
 @pytest.fixture
 def agent_label():
-    return AgentLabel(
-        "analyst", Role.ANALYST, Clearance.L2_SENSITIVE, Trust.T2_MEDIUM,
-        task_domain={"TASK-1"}, collab_group={"soc"},
-        tool_scope=set(), epoch=1,
-        ttl_start=datetime.utcnow(),
-        ttl_end=datetime.utcnow() + timedelta(days=1),
-    )
+    return make_agent_label("analyst", Role.ANALYST, Clearance.L2_SENSITIVE, Trust.T2_MEDIUM)
 
 
 @pytest.fixture
 def session(agent_label):
     return Session.start("sess-1", agent_label, "TASK-1")
-
-
-@pytest.fixture
-def var_store():
-    return VarStore()
 
 
 class TestToolRegistry:

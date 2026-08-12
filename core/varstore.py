@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .labels import Trust
+
 ConstraintType = Literal["bool", "enum", "number"]
 
 
@@ -21,6 +23,7 @@ class VarHandle:
     chunk_id: str
     reason: str                           # which rule caused HIDE
     constraint_types: list[ConstraintType] = field(default_factory=lambda: ["bool", "enum", "number"])
+    source_trust: Trust = Trust.T0_UNTRUSTED  # trust level of the hidden content
     metadata: dict = field(default_factory=dict)
 
     @property

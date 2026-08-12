@@ -91,3 +91,21 @@ def test_summary_all_attacks_blocked():
     a4_on = attack4_prompt_tampering(True)
     assert a4_off["attack_success"]
     assert not a4_on["attack_success"]
+
+
+def test_a11_echoleak_dual_rule_denial():
+    """A11 双平面拒止：EchoLeak 被 ProvenanceTrust 截断（Biba 轴），T0 结论无法驱动 T3 工具。"""
+    result = attack11_echoleak(protection=True)
+    d_inv = result.get("invoke_decision")
+    assert d_inv is not None, "A11 protection 模式应返回 invoke_decision"
+    assert not d_inv.allowed, "A11 应被阻断"
+
+    failed_rules = {c.rule for c in d_inv.checks if not c.passed}
+    # ProvenanceTrust 是核心防线：T0 来源的结论无法触发 T3 工具
+    assert "ProvenanceTrust" in failed_rules, \
+        f"A11 核心防线 ProvenanceTrust 必须失败，实际失败: {failed_rules}"
+
+    # 验证攻击场景的完整链路：投毒→信任衰减→拒绝执行
+    trust_check = next(c for c in d_inv.checks if c.rule == "ProvenanceTrust")
+    assert "T0" in trust_check.detail or "T1" in trust_check.detail, \
+        f"信任检查细节应反映低可信度，实际: {trust_check.detail}"

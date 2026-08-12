@@ -26,7 +26,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.labels import AgentLabel, Clearance, Trust, Role
 
@@ -294,7 +294,7 @@ class PromptLens:
         trace.append(f"[阶段3] 冲突 {len(conflicts)} 项，"
                      f"{'进入人工复核' if needs_review else '自动通过'}")
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         lbl = AgentLabel(
             agent_id=agent_id,
             role=decl.declared_role,

@@ -17,6 +17,7 @@ from core.labels import (
     IngestMode, TaskScope, derive_taskscope, TOOL_REQUIRED_TRUST,
 )
 from core.pdp import PDP
+from core.verdict import Verdict
 from core.session import Session, SessionStore
 from core.topology import Topology
 from scenarios.soc_setup import build_agents, build_topology, mk_mem, TASK
@@ -62,7 +63,7 @@ def test_02_consult_marks_chunks():
                  Layer.CONCLUSION, "intel")
 
     d = pdp.can_read_scoped(analyst, mem, s, scope)
-    assert d.allowed, f"CONSULT should allow reading: {d.explain()}"
+    assert d.verdict == Verdict.HIDE, f"CONSULT should return HIDE (VarStore): {d.explain()}"
     assert "m_consult" in s.consulted, "CONSULT should mark chunk as consulted"
 
 
@@ -80,7 +81,7 @@ def test_03_consult_blocks_write_provenance():
                  Layer.CONCLUSION, "intel")
 
     d = pdp.can_read_scoped(analyst, mem, s, scope)
-    assert d.allowed
+    assert d.verdict == Verdict.HIDE, f"CONSULT should return HIDE: {d.explain()}"
 
     dw, _ = pdp.can_write(analyst, s, Clearance.L2_SENSITIVE, Layer.CONCLUSION,
                           [mem], WriteOp.INFER, output_text="test")
@@ -109,7 +110,7 @@ def test_04_mixed_learn_consult_provenance():
 
     # CONSULT read
     d2 = pdp.can_read_scoped(analyst, m_consult, s, make_scope(IngestMode.CONSULT))
-    assert d2.allowed
+    assert d2.verdict == Verdict.HIDE, f"CONSULT should return HIDE: {d2.explain()}"
     assert "m_consult" in s.consulted
 
     # write with m_learn only -- should succeed
@@ -180,7 +181,7 @@ def test_07_consulted_persists_across_operations():
 
     # Step A: read in CONSULT
     d = pdp.can_read_scoped(analyst, mem, s, scope)
-    assert d.allowed
+    assert d.verdict == Verdict.HIDE
     assert "m_consult" in s.consulted
 
     # Step B: do other reads (LEARN mode)

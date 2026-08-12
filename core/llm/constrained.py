@@ -6,12 +6,15 @@ uses the real LLM with strict output constraints instead of keyword matching.
 """
 from __future__ import annotations
 
+import logging
+
 from core.isolated_llm import (
     ConstrainedAnswer, ControlFlowBudget, IsolatedLLMProto,
 )
 from core.varstore import VarStore, ConstraintType
 from .base import LLMBackend
 
+_log = logging.getLogger(__name__)
 
 _CONSTRAINT_PROMPTS: dict[ConstraintType, str] = {
     "bool": "Reply with ONLY the single word 'true' or 'false'. No other text.",
@@ -81,6 +84,8 @@ class ConstrainedQueryAdapter:
                 )
                 answer = self._parse_answer(resp.content, answer_type, **kwargs)
             except Exception:
+                _log.warning("Constrained query to LLM failed for %s", var_id,
+                           exc_info=True)
                 answer = None
 
         result = ConstrainedAnswer(

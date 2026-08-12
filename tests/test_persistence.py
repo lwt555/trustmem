@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, StaticPool
 from sqlalchemy.orm import sessionmaker
@@ -84,7 +84,7 @@ def test_roundtrip_memorylabel_to_orm_and_back():
         collab_group={"group-a", "group-b"},
         provenance_chain=["ch-000", "ch-000a"],
         lifecycle="active", epoch=3, declassified=False,
-        ttl_end=datetime.utcnow() + timedelta(days=7),
+        ttl_end=datetime.now(timezone.utc) + timedelta(days=7),
     )
     orm_row = _memlabel_to_orm(ml)
     ml2 = _memlabel_from_orm(orm_row)

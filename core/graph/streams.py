@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -25,7 +25,7 @@ class GraphEvent:
     event_type: GraphEventType
     agent_id: str
     payload: dict = field(default_factory=dict)
-    at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
         return {

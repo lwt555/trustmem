@@ -173,6 +173,7 @@ class ScenarioStatusResponse(BaseModel):
     status: str = "idle"
     phase: str = ""
     current_agent: str = ""
+    run_id: str = ""
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
 

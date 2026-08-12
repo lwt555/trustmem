@@ -113,9 +113,13 @@ class StubIsolatedLLM:
     """
 
     def __init__(self, var_store: VarStore | None = None,
-                 budget: ControlFlowBudget | None = None) -> None:
+                 budget: ControlFlowBudget | None = None,
+                 session_store: "SessionStore | None" = None,
+                 session_id: str = "") -> None:
         self.var_store = var_store or VarStore()
         self.budget = budget or ControlFlowBudget()
+        self.session_store = session_store
+        self.session_id = session_id
         self._content_store: dict[str, str] = {}          # var_id → content
         self._query_log: list[ConstrainedAnswer] = []
 
@@ -163,6 +167,15 @@ class StubIsolatedLLM:
                 f"Query type '{answer_type}' not allowed for #{var_id}. "
                 f"Allowed: {handle.constraint_types}")
 
+        # 会话级容量预算优先（跨所有 constrained query 实例共享）
+        if self.session_store and self.session_id:
+            if not self.session_store.consume_ctl(self.session_id, 1.0,
+                                                   handle.source_trust):
+                return ConstrainedAnswer(
+                    var_id=var_id, question=question, answer=None,
+                    answer_type=answer_type, budget_consumed=0,
+                    budget_remaining=0)
+        # 本地 4-bit 预算作为第二层
         ok = self.budget.consume(1.0)
         return ConstrainedAnswer(
             var_id=var_id,

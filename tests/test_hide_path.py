@@ -355,8 +355,8 @@ class TestPDPHideDecisions:
 
     def test_ttl_failure_returns_deny(self, pdp):
         """TTL expiry is DENY."""
-        from datetime import datetime, timedelta
-        past = datetime.utcnow() - timedelta(days=30)
+        from datetime import datetime, timedelta, timezone
+        past = datetime.now(timezone.utc) - timedelta(days=30)
         agent = AgentLabel("analyst-1", Role.ANALYST, Clearance.L3_SECRET,
                            Trust.T2_MEDIUM, task_domain={"task-1"},
                            collab_group={"sec"}, epoch=1,

@@ -53,7 +53,7 @@ def attack1_memory_poisoning(protection: bool) -> dict:
         m_concl = mk_mem("m3_conclusion", Clearance.L2_SENSITIVE, decay.trust_out,
                          Layer.CONCLUSION, "analyst", provenance=["m1_intel", "m2_log"])
     else:
-        s_an.t_eff = analyst.trust_intrinsic          # 直通：不做低水位
+        s_an.elevate(analyst.trust_intrinsic)          # 直通：不做低水位
         m_concl = mk_mem("m3_conclusion", Clearance.L2_SENSITIVE, Trust.T3_HIGH,
                          Layer.CONCLUSION, "analyst")
 
@@ -387,7 +387,8 @@ def attack11_echoleak(protection: bool) -> dict:
         success = True
 
     return {"name": "EchoLeak投毒诱导外泄", "protection": protection,
-            "attack_success": success}
+            "attack_success": success,
+            "invoke_decision": d_inv if protection else None}
 
 
 # ══════════════════════════════════════════════════════════════

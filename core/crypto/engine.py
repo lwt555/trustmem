@@ -12,7 +12,7 @@ import hashlib
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
 from core.labels import AgentLabel, MemoryLabel, Trust
@@ -141,7 +141,7 @@ class CryptoEngine:
 
     def _log_decrypt(self, agent_id: str, policy: str, allowed: bool, reason: str) -> None:
         self._decrypt_log.append({
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
             "agent_id": agent_id,
             "policy": policy,
             "allowed": allowed,
@@ -200,7 +200,7 @@ class CryptoEngine:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self._search_log.append({
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
             "top_k": top_k,
             "candidates": len(ids),
             "returned": len(top),

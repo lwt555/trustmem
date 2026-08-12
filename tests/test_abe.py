@@ -1,6 +1,6 @@
 """Tests for CP-ABE backend interface and simulation."""
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.crypto.abe_backend import ABEBackend, create_abe_backend
 from core.crypto.abe_simulation import ABESimulationBackend
@@ -80,8 +80,8 @@ class TestPolicyGeneration:
             "analyst", Role.ANALYST, Clearance.L2_SENSITIVE, Trust.T2_MEDIUM,
             task_domain={"TASK-1"}, collab_group={"soc"},
             epoch=1,
-            ttl_start=datetime.utcnow(),
-            ttl_end=datetime.utcnow() + timedelta(days=1),
+            ttl_start=datetime.now(timezone.utc),
+            ttl_end=datetime.now(timezone.utc) + timedelta(days=1),
         )
         attrs = agent_attributes(agent, topo)
         assert "agent_analyst" in attrs

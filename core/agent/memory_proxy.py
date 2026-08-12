@@ -105,6 +105,12 @@ class MemoryProxy:
                 max_val=kwargs.get("max_val", 100))
         raise ValueError(f"Unknown constraint type: {constraint_type}")
 
+    def can_invoke_tool(self, tool_name: str,
+                        action_fingerprint: str = "") -> Decision:
+        """Check whether the agent is allowed to invoke a tool via PDP."""
+        return self._pdp.can_invoke(
+            self.agent, self.session, tool_name, action_fingerprint)
+
     @property
     def t_eff(self) -> str:
         return fmt(self.session.t_eff)

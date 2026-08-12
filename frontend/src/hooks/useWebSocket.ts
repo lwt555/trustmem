@@ -13,8 +13,12 @@ export function useWebSocket() {
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
     ws.onmessage = (evt) => {
-      const result: StepResult = JSON.parse(evt.data);
-      setLastResult(result);
+      try {
+        const result: StepResult = JSON.parse(evt.data);
+        setLastResult(result);
+      } catch {
+        // ignore malformed messages
+      }
     };
     wsRef.current = ws;
   }, []);
@@ -53,8 +57,9 @@ export function useGraphWebSocket() {
     ws.onopen = () => setGraphConnected(true);
     ws.onclose = () => { setGraphConnected(false); setGraphRunning(false); };
     ws.onmessage = (evt) => {
-      const event: GraphEvent = JSON.parse(evt.data);
-      setGraphEvents((prev) => [...prev, event]);
+      try {
+        const event: GraphEvent = JSON.parse(evt.data);
+        setGraphEvents((prev) => [...prev, event]);
 
       if (event.event_type === "node_start") {
         setAgentStatuses((prev) => ({
@@ -68,6 +73,9 @@ export function useGraphWebSocket() {
         }));
       } else if (event.event_type === "graph_done") {
         setGraphRunning(false);
+      }
+      } catch {
+        // ignore malformed messages
       }
     };
     wsRef.current = ws;

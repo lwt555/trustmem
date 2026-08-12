@@ -103,7 +103,12 @@ class TestWriteEndpoint:
         _flush()
 
     def test_write_declassify(self, client):
-        """Write down with declassify should be allowed."""
+        """Write down with declassify should be allowed (with HITL)."""
+        store = get_session_store()
+        agents = get_agents()
+        planner = agents["planner"]
+        sess = store.get_or_start("sess-w4", planner, "unknown")
+        sess.add_hitl("declassify:planner:L0")
         r = client.post("/api/write", json={
             "agent_id": "planner", "session_id": "sess-w4",
             "content": "Declassified summary for public",

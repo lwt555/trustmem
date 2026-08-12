@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.labels import AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role, MemoryType
 from core.topology import Topology
@@ -75,7 +75,7 @@ def build_topology() -> Topology:
 
 
 def build_agents() -> dict[str, AgentLabel]:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     end = now + timedelta(hours=8)
     common = dict(task_domain={TASK}, collab_group={GROUP_SOC},
                   ttl_start=now, ttl_end=end, epoch=1)

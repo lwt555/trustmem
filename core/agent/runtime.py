@@ -4,9 +4,11 @@ Lifecycle: receive task → reason → call tools → read/write memory → repo
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterator
 
 from core.labels import AgentLabel, Trust, fmt
@@ -29,7 +31,7 @@ class AgentStep:
     tool_args: dict | None = None
     tool_result: ToolResult | None = None
     decision: Decision | None = None
-    at: datetime = field(default_factory=datetime.utcnow)
+    at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class AgentRuntime:
@@ -150,7 +152,7 @@ class AgentRuntime:
                 yield step
 
                 for tc in resp.tool_calls:
-                    result = self._tools.execute(tc.name, tc.arguments)
+                    result = self._execute_tool(tc)
                     s = self._add_step("tool_result", result.output,
                                        tool_name=tc.name,
                                        tool_args=tc.arguments,
@@ -171,12 +173,26 @@ class AgentRuntime:
         self._status = "done"
         self._done = True
 
+    @staticmethod
+    def _tool_fingerprint(tc) -> str:
+        raw = json.dumps({"tool": tc.name, "args": tc.arguments}, sort_keys=True)
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _execute_tool(self, tc) -> ToolResult:
+        """Execute a single tool call, gated through PDP can_invoke."""
+        fp = self._tool_fingerprint(tc)
+        decision = self.memory.can_invoke_tool(tc.name, action_fingerprint=fp)
+        if decision.verdict != Verdict.ALLOW:
+            deny_msg = f"PDP DENIED tool '{tc.name}': {decision.verdict.value}"
+            return ToolResult(success=False, output=deny_msg)
+        return self._tools.execute(tc.name, tc.arguments)
+
     def _handle_tool_calls(self, resp: LLMResponse,
                            tool_schemas: list[dict] | None) -> None:
-        """Execute tool calls and append results to conversation."""
+        """Execute tool calls after PDP can_invoke checks, append results."""
         tool_contents = []
         for tc in resp.tool_calls:
-            result = self._tools.execute(tc.name, tc.arguments)
+            result = self._execute_tool(tc)
             self._add_step("tool_result", result.output,
                           tool_name=tc.name, tool_args=tc.arguments,
                           tool_result=result)

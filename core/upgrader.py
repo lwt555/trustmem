@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
+from typing import Callable
 from urllib.parse import urlparse
 
 from .labels import MemoryLabel, Trust, fmt
@@ -72,12 +73,19 @@ class Upgrader:
 
     MIN_INDEPENDENT_SOURCES = 2
 
-    def try_upgrade(self, mem: MemoryLabel, ev: Evidence) -> UpgradeResult:
+    def try_upgrade(self, mem: MemoryLabel, ev: Evidence,
+                    sig_verifier: Callable[[str, str], bool] | None = None,
+                    ) -> UpgradeResult:
         before = mem.provenance_trust
 
         if ev.etype == EvidenceType.HUMAN:
             if not ev.human_signature:
                 return UpgradeResult(False, before, before, "人工确认缺少签名")
+            # 如提供签名验证器，执行密码学验证
+            if sig_verifier is not None:
+                if not sig_verifier(ev.human_signature, mem.chunk_id):
+                    return UpgradeResult(False, before, before,
+                                         "人工签名密码学验证失败")
             after = Trust.T3_HIGH
 
         elif ev.etype == EvidenceType.CROSS_SOURCE:
@@ -118,6 +126,6 @@ class Upgrader:
                 "matched": ev.matched_chunks,
                 "signature": ev.human_signature[:16] + "..." if ev.human_signature else "",
             },
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         }
         return UpgradeResult(True, before, after, ev.etype.value, payload)
