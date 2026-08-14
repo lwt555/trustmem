@@ -352,6 +352,7 @@ class ReadPipeline:
         epoch_current: int | None = None,
         scope: TaskScope,
         anchor: object | None = None,
+        absorb: bool = True,
     ) -> ReadResult:
         """Execute the full read pipeline with HIDE support."""
         side_effects: list[str] = []
@@ -436,7 +437,7 @@ class ReadPipeline:
 
         # 6. Decrypt content (ALLOW path) —— 先判决后解密
         before_t = session.t_eff
-        self.pep.commit(session, decision)          # 水位提交点（F-04）
+        self.pep.commit(session, decision, absorb=absorb)   # 水位提交点（F-04）
         if session.t_eff < before_t:
             result.t_eff_dropped = True
             result.t_eff_before = before_t

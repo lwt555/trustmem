@@ -16,6 +16,7 @@ class GraphEventType(str, Enum):
     MEMORY_READ = "memory_read"
     PDP_DECISION = "pdp_decision"
     TRUST_DECAY = "trust_decay"
+    TRUST_UPGRADE = "trust_upgrade"
     GRAPH_ERROR = "graph_error"
     GRAPH_DONE = "graph_done"
 

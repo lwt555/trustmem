@@ -14,6 +14,7 @@ from core.labels import Clearance, Layer, MemoryType, WriteOp, fmt
 from core.pdp import PDP
 from core.session import SessionStore
 from core.topology import Topology
+from core.human_gate import HumanRequest
 
 from .streams import GraphEvent, GraphEventType
 
@@ -37,10 +38,14 @@ class SimpleSOCRunner:
         pdp: PDP,
         topo: Topology,
         session_store: SessionStore,
+        endorser=None,
+        human_gate=None,
     ) -> None:
         self._agents = agents
         # pdp and topo accepted for caller compat; PDP gating lives in AgentRuntime
         self._session_store = session_store
+        self._endorser = endorser
+        self._human_gate = human_gate
         self._chain = ["planner", "intel", "log", "analyst", "executor", "auditor"]
         self._events: list[GraphEvent] = []
 
@@ -61,6 +66,24 @@ class SimpleSOCRunner:
 
             yield GraphEvent(GraphEventType.NODE_START, agent_id,
                            {"phase": agent_id, "task": task}, _utc_iso())
+
+            # HITL 门内容核验：executor 的高危动作依据 analyst 结论发起，
+            # 把 analyst 结论的 chunk 引用注入 runtime，触发 HITL 时一并展示，
+            # 让人工能解密查看该结论明文后再决定是否放行。
+            if agent_id == "executor":
+                analyst_rec = next(
+                    (r for r in written
+                     if r.get("agent_id") == "analyst" and r.get("chunk_id")),
+                    None)
+                if analyst_rec:
+                    agent_runtime.hitl_context = {
+                        "chunk_id": analyst_rec["chunk_id"],
+                        "sensitivity": analyst_rec.get("sensitivity", ""),
+                        "layer": analyst_rec.get("layer", ""),
+                        "owner": analyst_rec.get("owner", ""),
+                        "policy": analyst_rec.get("policy", ""),
+                        "trust": analyst_rec.get("trust_out", ""),
+                    }
 
             # 真读：下游通过 PDP 读上游记忆，触发读门 + LOMAC + 溯源。
             read_chunk_ids, read_notes, read_events = self._read_upstream(
@@ -133,6 +156,51 @@ class SimpleSOCRunner:
                             "c_eff": fmt(sess.c_eff),
                         },
                     }, _utc_iso())
+
+                    # 背书门（F-19 / TR13）：analyst 的 T1 研判经「人工」背书直升 T3。
+                    # 不再自动背书——submit 后阻塞等待人决定，批准才 endorse；
+                    # 拒绝则维持 T1（executor 读不到 T3 结论，高危工具连 CONFIRM 门都到不了）。
+                    if agent_id == "analyst" and result.allowed and self._human_gate is not None:
+                        req = HumanRequest(
+                            kind="endorse",
+                            agent_id="analyst",
+                            summary="是否背书 analyst 的研判结论（升 T3）",
+                            chunk_id=result.chunk_id,
+                            trust=fmt(decay.trust_out) if decay else "?",
+                            checks=checks,
+                            sensitivity=fmt(result.memory.sensitivity) if result.memory else "",
+                            layer=result.memory.layer.value if result.memory else "",
+                            owner=result.memory.owner_agent if result.memory else "",
+                            policy=getattr(result.ciphertext, "policy", "") if result.ciphertext else "",
+                        )
+                        self._human_gate.submit(req)
+                        human = self._human_gate.wait(req.request_id)
+                        if human.get("decision") == "approve" and self._endorser is not None:
+                            ct_bytes = (result.ciphertext.to_bytes()
+                                        if hasattr(result.ciphertext, "to_bytes")
+                                        else result.ciphertext)
+                            upgrade = self._endorser.endorse(result.memory, ct_bytes)
+                            if upgrade is not None:
+                                written[-1]["chunk_id"] = upgrade.new_chunk.chunk_id
+                                written[-1]["trust_out"] = fmt(upgrade.new_chunk.provenance_trust)
+                                written[-1]["upgraded_from"] = result.chunk_id
+                                yield GraphEvent(GraphEventType.TRUST_UPGRADE, agent_id, {
+                                    "upgraded_from": result.chunk_id,
+                                    "chunk_id": upgrade.new_chunk.chunk_id,
+                                    "from": fmt(upgrade.trust_before),
+                                    "to": fmt(upgrade.trust_after),
+                                    "evidence": upgrade.reason,
+                                    "anchor_payload": upgrade.anchor_payload,
+                                }, _utc_iso())
+                        else:
+                            yield GraphEvent(GraphEventType.TRUST_UPGRADE, agent_id, {
+                                "upgraded_from": result.chunk_id,
+                                "chunk_id": None,
+                                "from": fmt(decay.trust_out) if decay else "?",
+                                "to": fmt(decay.trust_out) if decay else "?",
+                                "evidence": f"人工拒绝背书：{human.get('reason', '未批准')}",
+                                "anchor_payload": None,
+                            }, _utc_iso())
                 except Exception:
                     _log.warning("Memory write failed for %s", agent_id, exc_info=True)
                     yield GraphEvent(GraphEventType.GRAPH_ERROR, agent_id,
@@ -165,12 +233,16 @@ class SimpleSOCRunner:
                 })
                 continue
 
-            result = agent_runtime.memory.read(cid)
+            # 线索读（absorb=False）：外部情报对所有人是线索；executor 只把 analyst 的
+            # 背书结论作为控制指令 FULL-absorb，planner/log 对其只是上下文，不降水位。
+            absorb = self._absorb_for(agent_runtime.agent.agent_id, rec.get("agent_id"))
+            result = agent_runtime.memory.read(cid, absorb=absorb)
             verdict = result.decision.verdict.value if result.decision else "DENY"
             denied_by = result.denied_by or (result.decision.denied_by if result.decision else None)
 
             if result.allowed:
-                read_chunk_ids.append(cid)
+                if absorb:
+                    read_chunk_ids.append(cid)
                 notes.append({
                     "agent_id": rec["agent_id"],
                     "verdict": verdict,
@@ -201,6 +273,21 @@ class SimpleSOCRunner:
                                      agent_runtime.agent.agent_id, payload, _utc_iso()))
 
         return read_chunk_ids, notes, events
+
+    @staticmethod
+    def _absorb_for(downstream_id: str, upstream_id: str) -> bool:
+        """下游 FULL-absorb 哪些上游记忆（吸收即降 t_eff / t_eff_ctl）。
+
+        - 外部情报（intel）对所有人都是「线索」，只取内容、不采信、不降水位。
+        - executor 只把 analyst 的（背书后）结论作为控制指令吸收；planner/log
+          对其是上下文（已由 analyst 消化进结论），不降控制流水位，否则 LOMAC
+          会把 executor 的 t_eff_ctl 拖到 T2，连 CONFIRM 门都走不到。
+        """
+        if upstream_id == "intel":
+            return False
+        if downstream_id == "executor" and upstream_id != "analyst":
+            return False
+        return True
 
     def _build_instruction(self, agent_id: str, task: str,
                            notes: list[dict]) -> str:
@@ -245,17 +332,19 @@ class SimpleSOCRunner:
 
     @staticmethod
     def _op_for(agent_id: str) -> WriteOp:
-        """intel 只做采集与格式化抽取（δ=0），其余为 LLM 摘要（δ=1）。"""
-        return WriteOp.EXTRACT if agent_id == "intel" else WriteOp.SUMMARIZE
+        """intel 采集外部情报、log 检索内部日志：都是「抽取/检索」δ=0；
+        其余（planner/analyst/executor/auditor）是 LLM 加工 δ=1。"""
+        return WriteOp.EXTRACT if agent_id in ("intel", "log") else WriteOp.SUMMARIZE
 
     @staticmethod
     def _schema_ok_for(agent_id: str) -> bool | None:
-        """EXTRACT 需 schema 校验通过才 δ=0；intel 的结构化 IOC 抽取视为通过。"""
-        return True if agent_id == "intel" else None
+        """EXTRACT 需 schema 校验通过才 δ=0；intel/log 的结构化抽取视为通过。"""
+        return True if agent_id in ("intel", "log") else None
 
     @staticmethod
     def _record_write(agent_id: str, content: str, result) -> dict:
         if result.allowed:
+            mem = result.memory
             return {
                 "agent_id": agent_id,
                 "chunk_id": result.chunk_id,
@@ -263,6 +352,10 @@ class SimpleSOCRunner:
                 "verdict": "ALLOW",
                 "denied_by": None,
                 "trust_out": fmt(result.decay.trust_out) if result.decay else "?",
+                "sensitivity": fmt(mem.sensitivity) if mem else "",
+                "layer": mem.layer.value if mem else "",
+                "owner": mem.owner_agent if mem else "",
+                "policy": getattr(result.ciphertext, "policy", "") if result.ciphertext else "",
             }
         decision = result.decision
         return {

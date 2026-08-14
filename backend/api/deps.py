@@ -20,7 +20,9 @@ from core.llm.factory import create_llm_backend
 from core.llm.base import LLMBackend
 from core.llm.stub import StubLLMBackend
 from core.agent.builder import AgentBuilder
-from scenarios.soc_setup import build_agents, build_topology
+from core.endorser import HumanEndorser
+from core.human_gate import HumanGate
+from scenarios.soc_setup import build_agents, build_topology, TASK, GROUP_SOC
 
 _log = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ _topology = build_topology()
 _agents = build_agents()
 _pdp = PDP(_topology)
 _crypto = CryptoEngine(_topology)
+_crypto.register_human_reviewer(TASK, {GROUP_SOC}, epoch=1)
 _session_store = SessionStore()
 _var_store = VarStore()
 _db_store = TrustMemStore(get_db())
@@ -56,6 +59,8 @@ _read_pipe = ReadPipeline(
 
 _llm: LLMBackend | None = None
 _agent_builder: AgentBuilder | None = None
+_endorser: HumanEndorser | None = None
+_human_gate: HumanGate | None = None
 
 
 def _create_llm_on_demand() -> LLMBackend:
@@ -98,6 +103,10 @@ def get_pdp() -> PDP:
     return _pdp
 
 
+def get_crypto() -> CryptoEngine:
+    return _crypto
+
+
 def get_session_store() -> SessionStore:
     return _session_store
 
@@ -128,3 +137,17 @@ def get_llm() -> LLMBackend:
 
 def get_agent_builder() -> AgentBuilder:
     return _create_builder_on_demand()
+
+
+def get_human_endorser() -> HumanEndorser:
+    global _endorser
+    if _endorser is None:
+        _endorser = HumanEndorser(_db_store.memories)
+    return _endorser
+
+
+def get_human_gate() -> HumanGate:
+    global _human_gate
+    if _human_gate is None:
+        _human_gate = HumanGate()
+    return _human_gate

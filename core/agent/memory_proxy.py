@@ -79,12 +79,14 @@ class MemoryProxy:
         )
 
     def read(self, chunk_id: str,
-             scope: TaskScope | None = None) -> ReadResult:
+             scope: TaskScope | None = None,
+             absorb: bool = True) -> ReadResult:
         return self._read_pipe.read(
             agent=self.agent,
             session=self.session,
             chunk_id=chunk_id,
             scope=scope or self._default_scope(),
+            absorb=absorb,
         )
 
     def read_many(self, chunk_ids: list[str],

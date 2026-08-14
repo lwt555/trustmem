@@ -1505,6 +1505,25 @@ table.task-table{
   </div>
 </div>
 
+<div class="modal-overlay" id="humanModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="mh-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">
+        <svg viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+      </div>
+      <div>
+        <div class="mh-title" id="humanTitle">人工确认</div>
+        <div class="mh-sub" id="humanSub">人在环门 · 等待决定</div>
+      </div>
+    </div>
+    <div class="modal-body" id="humanBody"></div>
+    <div class="modal-footer">
+      <button class="mf-btn cancel" id="humanDenyBtn">拒绝</button>
+      <button class="mf-btn primary" id="humanApproveBtn" style="background:linear-gradient(135deg,#ef4444,#dc2626);box-shadow:0 4px 14px rgba(239,68,68,.3)">批准</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    TrustMem v2 控制台 —— 逻辑层
@@ -1801,6 +1820,13 @@ function handleGraphEvent(e){
     case 'graph_error':
       appendDecLog({t, subj:e.agent_id||'system', act:'ERROR', obj:'', v:'deny', se:e.payload?.error||''});
       break;
+    case 'human_request': {
+      const hr = e.payload || {};
+      const kindLabel = hr.kind === 'endorse' ? '背书' : '高危动作';
+      appendDecLog({t, subj:e.agent_id, act:'HITL', obj:hr.tool_name||hr.kind||'', v:'confirm', se:`等待人工确认（${kindLabel}）`});
+      showHumanModal(hr);
+      break;
+    }
     case 'graph_done':
       backend.running = false;
       finishReal(e.payload);
@@ -1810,6 +1836,131 @@ function handleGraphEvent(e){
         appendDecLog({t, subj:e.agent_id, act:e.event_type==='agent_thought'?'THINK':'TOOL', obj:e.payload?.tool_name||'', v:'allow', se:(e.payload?.content||'').slice(0,90)});
       }
   }
+}
+
+/* —— 人工确认门（背书 / HITL）—— */
+
+let pendingHuman = null;
+
+function showHumanModal(req){
+  pendingHuman = req;
+  const isEndorse = req.kind === 'endorse';
+  document.getElementById('humanTitle').textContent = isEndorse ? '背书确认' : '高危动作确认';
+  document.getElementById('humanSub').textContent = isEndorse
+    ? '核验研判结论内容与可信度 · 批准升 T3'
+    : '核验高危动作与上游依据 · 批准即下发';
+
+  let html = '';
+  if(isEndorse){
+    html += `<div class="modal-field">
+      <label>研判结论</label>
+      <textarea readonly>${escapeHtml(req.summary||'')}</textarea>
+    </div>`;
+    html += humanMetaHtml(req);
+  }else{
+    html += `<div class="modal-field">
+      <label>工具调用 <span class="hint">${req.agent_id}</span></label>
+      <div style="font-family:Consolas,monospace;font-size:12.5px;color:var(--text);word-break:break-all;background:var(--bg-3);padding:10px;border-radius:5px;border:1px solid var(--border)">${escapeHtml(req.tool_name||'')}(${escapeHtml(JSON.stringify(req.tool_args||{}))})</div>
+    </div>`;
+    if(req.chunk_id){
+      html += `<div class="modal-field"><label>上游研判依据 <span class="hint">本动作依据此结论发起</span></label>${humanMetaHtml(req)}</div>`;
+    }
+  }
+
+  if(req.checks && req.checks.length){
+    html += `<div class="modal-field">
+      <label>PDP 检查轨迹</label>
+      <div style="font-family:Consolas,monospace;font-size:11px;line-height:1.7;color:var(--text-muted)">${
+        req.checks.map(c=>`<div>${c.passed?'✓':'✗'} ${escapeHtml(c.rule)} — ${escapeHtml(c.detail)}</div>`).join('')
+      }</div>
+    </div>`;
+  }
+
+  if(req.chunk_id){
+    html += humanDecryptBox(req);
+  }
+
+  document.getElementById('humanBody').innerHTML = html;
+  document.getElementById('humanModal').classList.add('show');
+}
+
+/** 内容元数据 + CP-ABE 策略 + chunk_id 展示（背书/HITL 共用）。 */
+function humanMetaHtml(req){
+  const sensColor = {L0:'#0f1f36',L1:'#1a4a6a',L2:'#2a6a8a',L3:'#1e88ff'}[req.sensitivity] || '#333';
+  const trustColor = {T0:'#ff4d4f',T1:'#ffaa00',T2:'#00d68f',T3:'#00d4ff'}[req.trust] || '#666';
+  return `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0 10px">
+      <div><div style="font-size:10px;color:var(--text-dim)">密级</div>
+        <div style="font-family:Consolas,monospace;font-size:13px;font-weight:600;color:${sensColor}">${escapeHtml(req.sensitivity||'?')}</div></div>
+      <div><div style="font-size:10px;color:var(--text-dim)">可信度</div>
+        <div style="font-family:Consolas,monospace;font-size:13px;font-weight:600;color:${trustColor}">${escapeHtml(req.trust||'?')}</div></div>
+      <div><div style="font-size:10px;color:var(--text-dim)">认知层</div>
+        <div style="font-family:Consolas,monospace;font-size:13px;color:var(--text)">${escapeHtml(req.layer||'?')}</div></div>
+      <div><div style="font-size:10px;color:var(--text-dim)">写入方</div>
+        <div style="font-family:Consolas,monospace;font-size:13px;color:var(--text)">${escapeHtml(req.owner||'?')}</div></div>
+    </div>
+    <div style="font-family:Consolas,monospace;font-size:10px;color:var(--text-dim);word-break:break-all;line-height:1.6">CP-ABE: ${escapeHtml(req.policy||'—')}</div>
+    <div style="font-family:Consolas,monospace;font-size:10px;color:var(--text-dim);word-break:break-all;margin-top:4px">chunk_id: ${escapeHtml(req.chunk_id||'')}</div>`;
+}
+
+/** 密级下拉 + 解密按钮 + 明文结果（背书/HITL 共用）。 */
+function humanDecryptBox(req){
+  const sel = ['L0','L1','L2','L3'].map(l=>{
+    const nm = {L0:'公开',L1:'内部',L2:'敏感',L3:'机密'}[l];
+    const selAttr = (l === (req.sensitivity||'L3')) ? ' selected' : '';
+    return `<option value="${l}"${selAttr}>${l} · ${nm}</option>`;
+  }).join('');
+  return `<div class="modal-field" style="border-top:1px dashed var(--border);padding-top:14px">
+    <label>解密查看明文 <span class="hint">CP-ABE：密钥密级须 ≥ 内容密级 ${escapeHtml(req.sensitivity||'?')}</span></label>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <select id="humanClearanceSel" style="background:var(--bg-3);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:7px 10px;font-family:var(--font-data);font-size:12px">${sel}</select>
+      <button class="mf-btn cancel" style="padding:7px 14px;font-size:12px" onclick="decryptHuman()">解密查看</button>
+    </div>
+    <div id="humanDecryptResult"></div>
+  </div>`;
+}
+
+/** 调用 /api/human/decrypt，用所选密级密钥解密查看明文。 */
+function decryptHuman(){
+  if(!pendingHuman || !pendingHuman.chunk_id) return;
+  const lvl = document.getElementById('humanClearanceSel').value;
+  const box = document.getElementById('humanDecryptResult');
+  if(!box) return;
+  box.innerHTML = '<div style="font-size:11px;color:var(--text-dim);font-family:var(--font-data)">解密中…</div>';
+  fetch(API_BASE + '/api/human/decrypt', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({chunk_id: pendingHuman.chunk_id, clearance: lvl})
+  }).then(r=>r.json()).then(j=>{
+    if(j.allowed){
+      box.innerHTML = `<div style="font-size:11px;color:#00d68f;font-family:var(--font-data);margin-bottom:6px">✓ ${escapeHtml(j.reason||'解密成功')}</div>
+        <textarea id="humanPlain" readonly style="min-height:90px;resize:vertical"></textarea>`;
+      document.getElementById('humanPlain').textContent = j.plaintext || '';
+    }else{
+      box.innerHTML = `<div style="font-size:11px;color:#ff4d4f;font-family:var(--font-data)">✗ ${escapeHtml(j.reason||'解密失败')}</div>`;
+    }
+  }).catch(e=>{
+    box.innerHTML = `<div style="font-size:11px;color:#ff4d4f;font-family:var(--font-data)">解密失败: ${escapeHtml(String(e))}</div>`;
+  });
+}
+
+function escapeHtml(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function resolveHuman(decision){
+  if(!pendingHuman) return;
+  const rid = pendingHuman.request_id;
+  fetch(API_BASE + '/api/human/resolve', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({request_id: rid, decision, reason: decision==='approve'?'人工批准':'人工拒绝'})
+  }).catch(()=>{});
+  appendDecLog({t:new Date().toLocaleTimeString('zh-CN',{hour12:false}), subj:pendingHuman.agent_id, act:'HITL', obj:decision==='approve'?'批准':'拒绝', v:decision==='approve'?'allow':'deny', se:pendingHuman.tool_name||pendingHuman.kind||''});
+  document.getElementById('humanModal').classList.remove('show');
+  pendingHuman = null;
 }
 
 function runReal(scenarioId){
@@ -2666,6 +2817,9 @@ document.getElementById('modalConfirmBtn').addEventListener('click',confirmAddAg
 document.getElementById('addAgentModal').addEventListener('click',e=>{
   if(e.target.id==='addAgentModal') closeAddAgentModal();
 });
+// 人工确认门事件
+document.getElementById('humanApproveBtn').addEventListener('click',()=>resolveHuman('approve'));
+document.getElementById('humanDenyBtn').addEventListener('click',()=>resolveHuman('deny'));
 // 能力 chip 点击切换
 document.querySelectorAll('#mfCaps .modal-chip').forEach(chip=>{
   chip.addEventListener('click',()=>{

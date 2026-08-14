@@ -47,7 +47,7 @@ export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses
   );
 
   const memoryItems = agentEvents.filter(e =>
-    e.event_type === "memory_write" || e.event_type === "memory_read" || e.event_type === "pdp_decision"
+    e.event_type === "memory_write" || e.event_type === "memory_read" || e.event_type === "pdp_decision" || e.event_type === "trust_upgrade"
   );
 
   const displayItems = tab === "thought" ? thoughtItems
@@ -171,6 +171,7 @@ export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses
               ${e.event_type === "agent_thought" ? "bg-slate-800/50" : ""}
               ${e.event_type === "agent_tool_result" ? "bg-purple-950/20 border border-purple-900/30" : ""}
               ${e.event_type === "memory_write" ? "bg-emerald-950/20 border border-emerald-900/30" : ""}
+              ${e.event_type === "trust_upgrade" ? "bg-teal-950/30 border border-teal-800/40" : ""}
               ${e.event_type === "pdp_decision" ? "bg-orange-950/20 border border-orange-900/30" : ""}
               ${e.event_type === "graph_error" ? "bg-red-950/30 border border-red-900/40" : ""}`}>
             <div className="flex items-center gap-1.5 mb-0.5">

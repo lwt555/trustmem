@@ -68,6 +68,7 @@ class CryptoEngine:
 
         # Registry
         self._agent_keys: dict[str, ABEAttributeKey] = {}     # agent_id -> attribute key
+        self._human_keys: dict[int, ABEAttributeKey] = {}     # clearance -> 人类审查员密钥
         self._memory_vectors: dict[str, CKKSEncryptedVector] = {}  # chunk_id -> encrypted embedding
 
         # Audit log
@@ -89,6 +90,50 @@ class CryptoEngine:
 
     def get_agent_key(self, agent_id: str) -> ABEAttributeKey | None:
         return self._agent_keys.get(agent_id)
+
+    def register_human_reviewer(self, task_id: str, collab_group: set[str],
+                                epoch: int = 1) -> None:
+        """为「人类审查员」按密级 L0–L3 各签发一把属性密钥。
+
+        人工在背书门/HITL 门里选择密级后，用对应密级的密钥解密查看明文——
+        密钥密级必须 >= 内容 sensitivity（策略首子句 clearance>=sensitivity），
+        否则在密码学层面解不开，没有「软件 if」。审查员身份带 role_Auditor，
+        可读 C/R/D 各认知层，但 task/group/epoch 仍须匹配内容策略。
+        """
+        self._human_keys = {}
+        for lvl in range(4):
+            attrs = [
+                f"clearance_{lvl}",
+                "role_Auditor",
+                f"task_{task_id}",
+                f"epoch_{epoch}",
+            ]
+            attrs += [f"group_{g}" for g in sorted(collab_group)]
+            self._human_keys[lvl] = abe_issue_key(
+                self.abe_mk, f"human-L{lvl}", attrs, epoch)
+
+    def decrypt_as_human(self, clearance: int, ct: Ciphertext | bytes | None
+                         ) -> tuple[bytes | None, str]:
+        """以人类审查员 L{clearance} 密钥解密密文，返回 (明文, 审计说明)。
+
+        密级不足或属性不满足策略 → 明文 None，密码学层面解不开。
+        """
+        if ct is None:
+            return None, "[DENY] 无密文"
+        if isinstance(ct, (bytes, bytearray)):
+            ct = Ciphertext.from_bytes(bytes(ct))
+        key = self._human_keys.get(clearance)
+        if key is None:
+            return None, f"[DENY] 未签发 L{clearance} 审查员密钥"
+        if key.epoch < 0:
+            return None, "[DENY] 审查员密钥 epoch 失效"
+        if not policy_satisfied(ct.policy, key.attributes):
+            return None, (f"[DENY] L{clearance} 密钥密级不足/属性不满足策略: "
+                          f"{ct.policy}")
+        plain = abe_decrypt(key, ct)
+        if plain is None:
+            return None, "[DENY] 解密失败（密钥不匹配）"
+        return plain, f"[ALLOW] L{clearance} 解密成功"
 
     # ── Memory encryption / decryption ────────────────────────
 

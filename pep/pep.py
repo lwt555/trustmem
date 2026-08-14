@@ -15,9 +15,15 @@ from core.verdict import Verdict
 
 
 class PEP:
-    def commit(self, sess: Session, d: Decision) -> None:
-        """唯一的水位提交点。非 ALLOW 一律 no-op（I8 隐藏中立性）。"""
+    def commit(self, sess: Session, d: Decision, absorb: bool = True) -> None:
+        """唯一的水位提交点。非 ALLOW 一律 no-op（I8 隐藏中立性）。
+
+        absorb=False 用于「线索读」：外部情报（T1）作为检索方向进入下游，
+        只取内容、不采信，故不降任何水位（t_eff / t_eff_ctl 都不动）。
+        """
         if d.verdict is not Verdict.ALLOW or d.pending_absorb is None:
+            return
+        if not absorb:
             return
         c, t = d.pending_absorb
         sess.absorb(d.object, c, t, mode=AbsorbMode.FULL)

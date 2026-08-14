@@ -208,6 +208,19 @@ class GraphCommand(BaseModel):
     protection: bool = True
 
 
+class HumanResolveRequest(BaseModel):
+    """REST: 人工确认门的决定回执（背书 / HITL）。"""
+    request_id: str
+    decision: str = "deny"   # "approve" | "deny"
+    reason: str = ""
+
+
+class HumanDecryptRequest(BaseModel):
+    """REST: 人工以某密级审查员密钥解密查看记忆明文。"""
+    chunk_id: str
+    clearance: str = "L3"    # "L0".."L3" 或 "0".."3"
+
+
 class GraphEventMessage(BaseModel):
     """WebSocket: graph event pushed to client."""
     event_type: str

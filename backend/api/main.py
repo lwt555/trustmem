@@ -36,11 +36,12 @@ from .schemas import (
     ReadRequest, ReadResponse, ReadManyRequest,
     SystemStats, StepMessage, StepResult, VarHandleInfo, AgentInfo, Watermarks,
     ScenarioRunRequest, ScenarioStatusResponse, AgentStatusResponse,
+    HumanResolveRequest, HumanDecryptRequest,
 )
 from .deps import (
     get_agents, get_session_store, get_var_store,
     get_merkle_audit, get_write_pipeline, get_read_pipeline, get_db_store,
-    get_topology,
+    get_topology, get_human_gate, get_crypto,
 )
 from core.labels import (
     Clearance, Trust, Layer, MemoryType, WriteOp, TaskScope, IngestMode,
@@ -364,6 +365,47 @@ def flush_session():
             "event_count": block.event_count if block else 0}
 
 
+# ── Human-in-the-loop (背书门 / HITL 门人工确认) ─────────────
+
+@app.post("/api/human/resolve")
+def human_resolve(req: HumanResolveRequest):
+    """人工确认门的决定回执：approve 放行 / deny 拒绝，唤醒阻塞中的 wait()。"""
+    gate = get_human_gate()
+    ok = gate.resolve(req.request_id, req.decision, req.reason)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="请求不存在或已过期")
+    return {"resolved": True, "request_id": req.request_id, "decision": req.decision}
+
+
+@app.get("/api/human/pending")
+def human_pending():
+    """只读快照：当前待人工确认的请求（调试/兜底，不清空）。"""
+    gate = get_human_gate()
+    return {"pending": [r.to_dict() for r in gate.list_new()],
+            "count": gate.pending_count}
+
+
+@app.post("/api/human/decrypt")
+def human_decrypt(req: HumanDecryptRequest):
+    """人工以某密级审查员密钥解密查看记忆明文（背书门/HITL 门内容核验）。
+
+    密级不足或属性不满足 CP-ABE 策略 → allowed=False（密码学层面解不开）。
+    """
+    from fastapi import HTTPException
+    ct = get_db_store().memories.get_ciphertext(req.chunk_id)
+    if ct is None:
+        raise HTTPException(status_code=404, detail="密文不存在或 chunk_id 无效")
+    lvl = int(_parse_clearance(req.clearance))
+    plain, reason = get_crypto().decrypt_as_human(lvl, ct)
+    if plain is None:
+        return {"allowed": False, "chunk_id": req.chunk_id,
+                "clearance": fmt(Clearance(lvl)), "reason": reason}
+    return {"allowed": True, "chunk_id": req.chunk_id,
+            "clearance": fmt(Clearance(lvl)),
+            "plaintext": plain.decode("utf-8", "replace"), "reason": reason}
+
+
 # ── Memories ────────────────────────────────────────────────
 
 @app.get("/api/memories")
@@ -566,7 +608,7 @@ def get_agent_status(agent_id: str):
 
 def create_app() -> FastAPI:
     from backend.db.database import init_db
-    from backend.db.seed import seed
+    from backend.db.seed_ops import seed_ops
     init_db()
-    seed(get_db_store().db)   # 建业务数据表并灌入演示数据（幂等）
+    seed_ops(get_db_store().db, reset=True)   # 灌入作战场景内部数据（54资产+攻击链日志+情报）
     return app

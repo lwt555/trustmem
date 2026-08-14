@@ -50,6 +50,7 @@ class AgentBuilder:
         tool_registry: ToolRegistry | None = None,
         session_id: str = "",
         task_id: str = "",
+        human_gate=None,
     ) -> AgentRuntime:
         tools = tool_registry or ToolRegistry()
         session = self._session_store.get_or_start(
@@ -78,4 +79,5 @@ class AgentBuilder:
             tools=tools,
             memory=memory,
             system_prompt=system_prompt,
+            human_gate=human_gate,
         )

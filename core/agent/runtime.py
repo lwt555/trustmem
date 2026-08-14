@@ -17,6 +17,7 @@ from core.session import Session
 from core.topology import Topology
 from core.verdict import Verdict
 from core.llm.base import LLMBackend, LLMResponse
+from core.human_gate import HumanRequest
 
 from .tools import ToolRegistry, ToolResult
 from .memory_proxy import MemoryProxy
@@ -49,12 +50,15 @@ class AgentRuntime:
         tools: ToolRegistry,
         memory: MemoryProxy,
         system_prompt: str,
+        human_gate=None,
     ) -> None:
         self.agent = agent_label
         self._llm = llm
         self._tools = tools
         self.memory = memory
         self._system = system_prompt
+        self._human_gate = human_gate
+        self.hitl_context: dict | None = None   # 触发 HITL 时附带的上游结论引用
         self._conversation: list[dict] = []
         self.steps: list[AgentStep] = []
         self._done = False
@@ -185,8 +189,48 @@ class AgentRuntime:
         # 而非「无 provenance 参数」恒 PASS（自我申报）。
         decision = self.memory.can_invoke_tool(
             tc.name, action_fingerprint=fp, provenance=self._session_provenance())
+
+        # F-16 HITL 人工确认门：高危工具命中 CONFIRM 时，阻塞等待人工批准。
+        # 批准 → add_hitl(fp) 后重试 can_invoke（has_hitl=True → ALLOW）执行；
+        # 拒绝 → 返回人工拒绝结果，动作不下发。
+        if decision.verdict == Verdict.CONFIRM and self._human_gate is not None:
+            checks = [{"rule": c.rule, "passed": c.passed, "detail": c.detail}
+                      for c in decision.checks]
+            ctx = self.hitl_context or {}
+            req = HumanRequest(
+                kind="hitl",
+                agent_id=self.agent.agent_id,
+                summary=f"高危动作 {tc.name} 需人工确认",
+                tool_name=tc.name,
+                tool_args=tc.arguments,
+                action_fingerprint=fp,
+                checks=checks,
+                chunk_id=ctx.get("chunk_id", ""),
+                trust=ctx.get("trust", ""),
+                sensitivity=ctx.get("sensitivity", ""),
+                layer=ctx.get("layer", ""),
+                owner=ctx.get("owner", ""),
+                policy=ctx.get("policy", ""),
+            )
+            self._human_gate.submit(req)
+            human = self._human_gate.wait(req.request_id)
+            if human.get("decision") == "approve":
+                self.memory.session.add_hitl(fp)
+                decision = self.memory.can_invoke_tool(
+                    tc.name, action_fingerprint=fp,
+                    provenance=self._session_provenance())
+            else:
+                return ToolResult(
+                    tool_name=tc.name, success=False,
+                    output=(f"PDP 人工拒绝 tool '{tc.name}': "
+                            f"{human.get('reason', 'HITL 未批准')}"))
+
         if decision.verdict != Verdict.ALLOW:
-            deny_msg = f"PDP DENIED tool '{tc.name}': {decision.verdict.value}"
+            if decision.verdict == Verdict.CONFIRM:
+                deny_msg = (f"PDP 需人工确认 tool '{tc.name}': CONFIRM "
+                            f"（HITL 门，未执行）")
+            else:
+                deny_msg = f"PDP DENIED tool '{tc.name}': {decision.verdict.value}"
             return ToolResult(tool_name=tc.name, success=False, output=deny_msg)
         return self._tools.execute(tc.name, tc.arguments)
 
