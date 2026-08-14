@@ -13,11 +13,47 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from core.labels import AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role, MemoryType
+from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer, Role,
+                         MemoryType, IngestMode, TaskScope, derive_taskscope)
 from core.topology import Topology
 
 TASK = "INC-2026-0731"
 GROUP_SOC = "soc-response"
+
+# 六个 SOC 任务的摄取模式（F-22 / 设计文档 §2.4）：审计/分诊/复核只读不吸收。
+SOC_TASK_MODES: dict[str, IngestMode] = {
+    "SOC-2026-ANALYZE": IngestMode.LEARN,
+    "SOC-2026-RESPOND": IngestMode.LEARN,
+    "SOC-2026-DISCLOSE": IngestMode.LEARN,
+    "SOC-2026-AUDIT": IngestMode.CONSULT,
+    "SOC-2026-TRIAGE": IngestMode.CONSULT,
+    "SOC-2026-VERIFY": IngestMode.CONSULT,
+}
+
+# 每个任务的出口（数据出口）与高危工具（处置工具），供 derive_taskscope 推导区间。
+SOC_TASK_TOOLS: dict[str, tuple[set[str], set[str]]] = {
+    "SOC-2026-ANALYZE": ({"memory.write"}, {"asset_query"}),
+    "SOC-2026-RESPOND": ({"memory.write"}, {"firewall_block", "host_isolate"}),
+    "SOC-2026-DISCLOSE": ({"answer_to_user"}, set()),
+    "SOC-2026-AUDIT": (set(), {"asset_query"}),
+    "SOC-2026-TRIAGE": (set(), {"log_query"}),
+    "SOC-2026-VERIFY": (set(), {"log_query"}),
+}
+
+
+def load_task(tid: str) -> "SocTask":
+    """加载一个 SOC 任务，附带由 derive_taskscope 推导的 TaskScope。"""
+    exports, tools = SOC_TASK_TOOLS.get(tid, (set(), set()))
+    scope = derive_taskscope(tid, exports=exports, tools=tools,
+                             default_ingest=SOC_TASK_MODES.get(tid, IngestMode.LEARN))
+    return SocTask(tid, scope)
+
+
+class SocTask:
+    """SOC 任务描述：持有推导出的 TaskScope。"""
+    def __init__(self, task_id: str, scope: TaskScope) -> None:
+        self.task_id = task_id
+        self.scope = scope
 
 SYSTEM_PROMPTS: dict[str, str] = {
     "planner": (

@@ -27,6 +27,15 @@ export interface StepResult {
   side_effects: string[];
   merkle_root: string | null;
   var_handle: VarHandleInfo | null;
+  watermarks: Watermarks | null;
+}
+
+export interface Watermarks {
+  c_eff: string;            // 机密性高水位（只升）
+  t_eff: string;            // 完整性低水位（只降）
+  t_eff_ctl: string;        // LLM 控制流隔离水位
+  capacity_used_bits: number;
+  capacity_budget_bits: number;
 }
 
 export interface CheckInfo {

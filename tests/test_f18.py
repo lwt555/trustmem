@@ -41,7 +41,8 @@ def test_F18_anchor_does_not_block_decision():
     assert elapsed < 0.05, "锚定不得阻塞裁决路径"
 
 
-def test_F18_replay_detects_tampering():
+def test_F18_replay_detects_tampering(monkeypatch):
+    monkeypatch.setenv("TRUSTMEM_ALLOW_TAMPER", "1")
     store = MerkleStore()
     from core.merkle import AuditEvent
     for i in range(3):

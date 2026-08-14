@@ -94,7 +94,8 @@ def test_F04_deny_changes_nothing():
     sess = Session.start("s", low, "task-x")
     before = _snapshot(sess)
 
-    r = pipe.read(agent=low, session=sess, chunk_id=secret.chunk_id)
+    r = pipe.read(agent=low, session=sess, chunk_id=secret.chunk_id,
+                  scope=TaskScope("t", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
     assert r.decision.verdict is Verdict.DENY
     assert _snapshot(sess) == before, "硬拒绝不得改变水位"
 

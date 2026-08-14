@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -443,8 +445,22 @@ class MerkleStore:
 
     # ── Tamper attempt (for testing) ────────────────────────────
 
+    _TAMPER_GATE_ENV = "TRUSTMEM_ALLOW_TAMPER"
+
     def tamper_event(self, event_id: str, new_payload: dict) -> bool:
-        """Modify an event's payload (simulates tampering)."""
+        """Modify an event's payload (simulates tampering). 仅测试用途（F-28）。
+
+        生产接口上绝不允许改写已落链的事件——那是演示「改一行后 verify 失败」
+        所需的越权入口。默认关闭：未设 ``TRUSTMEM_ALLOW_TAMPER=1`` 即抛错，
+        每次调用强制打 WARNING 日志；API 层绝不暴露本方法。
+        """
+        if os.environ.get(self._TAMPER_GATE_ENV) != "1":
+            logging.getLogger("trustmem.merkle").warning(
+                "tamper_event(%s) 被调用但未开启 %s=1，拒绝执行（F-28 生产门禁）",
+                event_id, self._TAMPER_GATE_ENV)
+            raise RuntimeError(
+                f"tamper_event 仅测试用途，需设 {self._TAMPER_GATE_ENV}=1（F-28）")
+
         block_id = self._event_index.get(event_id)
         if not block_id:
             return False
@@ -454,6 +470,8 @@ class MerkleStore:
         for e in block.events:
             if e.event_id == event_id:
                 e.payload = new_payload
+                logging.getLogger("trustmem.merkle").warning(
+                    "tamper_event(%s): 已篡改事件 payload（仅供演示链完整性被破坏）", event_id)
                 return True
         return False
 
@@ -485,6 +503,10 @@ _EVENT_MAP: dict[tuple[str, bool, str | None], EventType] = {
     ("WRITE", False, "Biba-Star"): EventType.WRITE_DENY,
     ("WRITE", False, "LayerWrite"): EventType.WRITE_DENY,
     ("WRITE", False, "Provenance-NoConsult"): EventType.WRITE_DENY,
+    ("WRITE", False, "P-T-ControlFlow"): EventType.WRITE_DENY,
+    ("WRITE", False, "NoWriteDown(BLP-Star)"): EventType.WRITE_DENY,
+    ("WRITE", False, "NoWriteDown(C-Eff-WriteDown)"): EventType.WRITE_DENY,
+    ("WRITE", False, "NoWriteDown(BLP-Star + C-Eff-WriteDown)"): EventType.WRITE_DENY,
     ("WRITE", False, "TaskScope-C"): EventType.WRITE_DENY,
     ("WRITE", False, "TaskScope-T"): EventType.WRITE_DENY,
     # ── READ ──

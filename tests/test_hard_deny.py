@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer,
-                         MemoryType, Role)
+                         MemoryType, Role, TaskScope)
 from core.session import Session
 from core.topology import Topology
 from core.pdp import PDP
@@ -116,7 +116,8 @@ def test_F01_hard_deny_creates_no_var_handle():
     var_store = VarStore()
     pipe = ReadPipeline(pdp, None, MemStore(), Audit(), var_store)
     sess = Session.start("s", low, "task-x")
-    r = pipe.read(agent=low, session=sess, chunk_id=mem.chunk_id)
+    r = pipe.read(agent=low, session=sess, chunk_id=mem.chunk_id,
+                  scope=TaskScope("task-x", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
     assert r.decision.verdict is Verdict.DENY
     assert r.var_handle is None
     assert var_store.count == 0

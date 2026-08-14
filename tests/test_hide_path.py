@@ -612,7 +612,9 @@ class TestPipelineHideIntegration:
                           "task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
         sess = Session.start("s", analyst, "task-1")
-        result = read_pipe.read(agent=analyst, session=sess, chunk_id="normal")
+        scope = TaskScope("task-1", Clearance.L3_SECRET, Trust.T0_UNTRUSTED)
+        result = read_pipe.read(agent=analyst, session=sess, chunk_id="normal",
+                                scope=scope)
 
         assert result.allowed
         assert not result.hidden

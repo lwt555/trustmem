@@ -433,7 +433,8 @@ class TestMerkleStore:
         assert result["valid"]
         assert result["chain_length"] >= 3
 
-    def test_verify_chain_tampered(self):
+    def test_verify_chain_tampered(self, monkeypatch):
+        monkeypatch.setenv("TRUSTMEM_ALLOW_TAMPER", "1")
         store = MerkleStore(block_size=3)
         for i in range(6):
             store.log(self._event(f"ev-{i}"))
@@ -444,7 +445,8 @@ class TestMerkleStore:
         # Event integrity check should fail
         assert not store.verify_event("ev-2")
 
-    def test_tamper_event_nonexistent(self):
+    def test_tamper_event_nonexistent(self, monkeypatch):
+        monkeypatch.setenv("TRUSTMEM_ALLOW_TAMPER", "1")
         store = MerkleStore()
         assert not store.tamper_event("nonexistent", {})
 

@@ -35,6 +35,7 @@ DELTA: dict[WriteOp, int] = {
 }
 
 VERBATIM_OVERLAP_THRESHOLD = 0.85   # 逐字引用的最低字面重叠率
+MAX_VERBATIM_LEN = 10_000           # 重叠率校验的长度上限（字符）。超长走 O(1) 保守降级，避开 O(n²)
 
 
 @dataclass
@@ -58,7 +59,7 @@ class DecayResult:
 def _overlap_ratio(src: str, out: str) -> float:
     if not out:
         return 0.0
-    return difflib.SequenceMatcher(None, src, out).ratio()
+    return difflib.SequenceMatcher(None, src, out, autojunk=True).ratio()
 
 
 @trust_rule("TR7", group="B",
@@ -76,6 +77,9 @@ def verify_op(
     这是防止 Agent 通过谎报操作类型规避衰减的闸门。
     """
     if op_claimed == WriteOp.VERBATIM:
+        if (len(output_text) > MAX_VERBATIM_LEN
+                or any(len(s) > MAX_VERBATIM_LEN for s in input_texts)):
+            return WriteOp.INFER, f"超长文本（>{MAX_VERBATIM_LEN} 字符）跳过重叠率校验，保守降级"
         best = max((_overlap_ratio(s, output_text) for s in input_texts), default=0.0)
         if best < VERBATIM_OVERLAP_THRESHOLD:
             return WriteOp.INFER, f"字面重叠率 {best:.2f} < {VERBATIM_OVERLAP_THRESHOLD}"

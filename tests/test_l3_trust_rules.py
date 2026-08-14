@@ -160,6 +160,25 @@ def test_TR14_independence_at_publisher_entity_level():
     print(f"  TR14: Cross-publisher sources → meet={meet2.name}")
 
 
+def test_F27_verbatim_long_text_bounded_time():
+    """F27: 超长文本 VERBATIM 校验走 O(1) 保守降级，20KB < 50ms"""
+    import time
+    ctx = _ctx()
+    WriteOp = ctx["WriteOp"]; verify_op = ctx["verify_op"]
+
+    long_text = "A" * 20_000          # 超过 MAX_VERBATIM_LEN(10_000)
+    t0 = time.perf_counter()
+    op_eff, reason = verify_op(WriteOp.VERBATIM, [long_text], long_text)
+    elapsed = time.perf_counter() - t0
+
+    assert op_eff == WriteOp.INFER, \
+        f"F27 FAIL: 超长文本应保守降级 INFER，实得 {op_eff.value}"
+    assert reason is not None
+    assert elapsed < 0.05, \
+        f"F27 FAIL: 超长文本校验耗时 {elapsed*1000:.1f}ms，应 < 50ms"
+    print(f"  F27: 20KB VERBATIM → {op_eff.value} ({elapsed*1000:.2f}ms) reason={reason}")
+
+
 if __name__ == "__main__":
     tests = [
         test_TR6_output_trust_meets_min_input,
@@ -167,6 +186,7 @@ if __name__ == "__main__":
         test_TR9_fuse_dirtiest_wins,
         test_TR10_consult_write_deny,
         test_TR14_independence_at_publisher_entity_level,
+        test_F27_verbatim_long_text_bounded_time,
     ]
     passed = failed = 0
     for t in tests:

@@ -1,7 +1,9 @@
 """WebSocket handler for graph streaming — pushes LangGraph stream events."""
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import traceback
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -15,6 +17,7 @@ from core.graph.soc_graph import SimpleSOCRunner
 from core.agent.tools import ToolRegistry
 from scenarios.soc_setup import TOOL_REGISTRY
 from scenarios import soc_scenario1, soc_scenario2, soc_scenario3
+from backend.tools import REAL_TOOLS, TOOL_SCHEMAS
 
 
 _SCENARIO_TASKS = {
@@ -77,9 +80,12 @@ async def _run_scenario(websocket: WebSocket, msg: GraphCommand) -> None:
         tool_names = TOOL_REGISTRY.get(agent_id, set())
         tool_registry = ToolRegistry()
         for tname in tool_names:
+            func = REAL_TOOLS.get(tname)          # 查询类工具接真实 SQLite 数据源
+            desc = f"Real {tname} tool" if func else f"Stub {tname} tool"
             tool_registry.register_builtin(
-                tname, f"Stub {tname} tool",
-                {"type": "object", "properties": {}},
+                tname, desc,
+                TOOL_SCHEMAS.get(tname, {"type": "object", "properties": {}}),
+                func=func,
             )
 
         prompt_file_map = {
@@ -108,14 +114,32 @@ async def _run_scenario(websocket: WebSocket, msg: GraphCommand) -> None:
 
     runner = SimpleSOCRunner(agent_runtimes, pdp, topo, session_store)
 
-    try:
-        for event in runner.stream(task):
-            d = event.to_dict()
-            await websocket.send_text(json.dumps(d, ensure_ascii=False))
-    except Exception as e:
-        await websocket.send_text(json.dumps({
-            "event_type": "graph_error",
-            "agent_id": "system",
-            "payload": {"error": str(e), "traceback": traceback.format_exc()},
-            "at": "",
-        }, ensure_ascii=False))
+    # runner.stream() 同步调用 LLM，会阻塞事件循环导致 WebSocket 心跳超时；
+    # 放到后台线程执行，事件经队列送回主循环再推送。
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _produce() -> None:
+        try:
+            for event in runner.stream(task):
+                queue.put_nowait(event)
+        except Exception as e:
+            queue.put_nowait(("error", str(e), traceback.format_exc()))
+        finally:
+            queue.put_nowait(None)
+
+    threading.Thread(target=_produce, daemon=True).start()
+
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        if isinstance(item, tuple) and item[0] == "error":
+            await websocket.send_text(json.dumps({
+                "event_type": "graph_error",
+                "agent_id": "system",
+                "payload": {"error": item[1], "traceback": item[2]},
+                "at": "",
+            }, ensure_ascii=False))
+            break
+        d = item.to_dict()
+        await websocket.send_text(json.dumps(d, ensure_ascii=False))

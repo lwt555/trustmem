@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from core.labels import (AgentLabel, Clearance, Layer, MemoryType, WriteOp,
-                         TaskScope, fmt)
+                         TaskScope, derive_taskscope, fmt)
 from core.pdp import PDP, Decision
 from core.pipeline import WritePipeline, ReadPipeline, WriteResult, ReadResult
 from core.session import Session
@@ -47,6 +47,10 @@ class MemoryProxy:
         self.session = session
         self.topo = topo
 
+    def _default_scope(self) -> TaskScope:
+        """未显式传 scope 时，从本会话任务与主体标签推导（F-22：scope 必填）。"""
+        return derive_taskscope(self.session.task_id, agent=self.agent)
+
     def write(
         self, content: str, sensitivity: Clearance, layer: Layer,
         memory_type: MemoryType = MemoryType.EPISODIC,
@@ -54,6 +58,7 @@ class MemoryProxy:
         op: WriteOp = WriteOp.INFER,
         task_binding: str | None = None,
         scope: TaskScope | None = None,
+        schema_ok: bool | None = None,
     ) -> WriteResult:
         input_ids = input_chunk_ids or []
         input_mems = [self._read_pipe.mem_store.get(cid) for cid in input_ids]
@@ -69,7 +74,8 @@ class MemoryProxy:
             input_mems=input_mems,
             op=op,
             task_binding=task_binding,
-            scope=scope,
+            scope=scope or self._default_scope(),
+            schema_ok=schema_ok,
         )
 
     def read(self, chunk_id: str,
@@ -78,7 +84,7 @@ class MemoryProxy:
             agent=self.agent,
             session=self.session,
             chunk_id=chunk_id,
-            scope=scope,
+            scope=scope or self._default_scope(),
         )
 
     def read_many(self, chunk_ids: list[str],
@@ -87,7 +93,7 @@ class MemoryProxy:
             agent=self.agent,
             session=self.session,
             chunk_ids=chunk_ids,
-            scope=scope,
+            scope=scope or self._default_scope(),
         )
 
     def query_var(self, var_id: str, question: str,

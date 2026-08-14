@@ -13,10 +13,15 @@ from core.pdp import PDP, Decision, Check
 from core.decay import DecayResult
 from core.topology import Topology
 from core.pipeline import WritePipeline, ReadPipeline, WriteResult, ReadResult
+from core.verdict import Verdict
 from core.crypto.abe import (
     abe_setup, abe_issue_key, abe_encrypt, abe_decrypt, Ciphertext,
 )
 from core.crypto.engine import CryptoEngine
+
+
+# 宽松区间：scope 改为必填（F-22）后，不关心区间限制的用例统一用它。
+_PERMISSIVE_SCOPE = TaskScope("task-1", Clearance.L3_SECRET, Trust.T0_UNTRUSTED)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -204,6 +209,7 @@ class TestWritePipeline:
             memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem],
             op=WriteOp.SUMMARIZE,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         assert result.memory is not None
@@ -218,6 +224,7 @@ class TestWritePipeline:
             content="finding", target_sensitivity=Clearance.L1_INTERNAL,
             target_layer=Layer.CONCLUSION, memory_type=MemoryType.INTEL,
             input_mems=[intel_mem], op=WriteOp.VERBATIM,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         stored = mem_store.get(result.chunk_id)
@@ -231,6 +238,7 @@ class TestWritePipeline:
             content="fused", target_sensitivity=Clearance.L0_PUBLIC,
             target_layer=Layer.CONCLUSION, memory_type=MemoryType.INTEL,
             input_mems=[intel_mem, trusted_mem], op=WriteOp.FUSE,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         assert len(prov_store.links) == 2
@@ -244,6 +252,7 @@ class TestWritePipeline:
             content="audit test", target_sensitivity=Clearance.L1_INTERNAL,
             target_layer=Layer.CONCLUSION, memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem], op=WriteOp.VERBATIM,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         assert len(audit_store.events) == 1
@@ -265,6 +274,7 @@ class TestWritePipeline:
             target_layer=Layer.DIRECTIVE,
             memory_type=MemoryType.PROCEDURAL,
             input_mems=[input_mem], op=WriteOp.INFER,
+            scope=_PERMISSIVE_SCOPE,
         )
         # With T_eff=T1 and INFER (δ=1), trust_out = min(T1,T1)-1 = T0
         # T0 write-up would be: T0 > T1? No... actually T0 <= T1, so Biba passes
@@ -284,6 +294,7 @@ class TestWritePipeline:
             target_layer=Layer.DIRECTIVE,
             memory_type=MemoryType.PROCEDURAL,
             input_mems=[], op=WriteOp.VERBATIM,
+            scope=_PERMISSIVE_SCOPE,
         )
         # With no input mems and T_eff=T0: trust_out = min(T3,T0)-0 = T0
         # T0 <= T0 (Biba ok)
@@ -300,6 +311,7 @@ class TestWritePipeline:
             target_layer=Layer.CONCLUSION,
             memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem], op=WriteOp.SUMMARIZE,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert not result.allowed
         assert result.denied_by == "Provenance-NoConsult"
@@ -314,6 +326,7 @@ class TestWritePipeline:
             target_layer=Layer.CONCLUSION,
             memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem], op=WriteOp.SUMMARIZE,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert not result.allowed
         assert len(audit_store.events) == 1
@@ -327,6 +340,7 @@ class TestWritePipeline:
             memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem], op=WriteOp.VERBATIM,
             task_binding="custom-task-99",
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         assert result.memory.task_binding == "custom-task-99"
@@ -343,6 +357,7 @@ class TestWritePipeline:
             memory_type=MemoryType.PROCEDURAL,
             input_mems=[], op=WriteOp.VERBATIM,
             declassify_approved=True,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
 
@@ -357,6 +372,7 @@ class TestWritePipeline:
             memory_type=MemoryType.SEMANTIC,
             input_mems=[], op=WriteOp.VERBATIM,
             declassify_approved=False,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert not result.allowed
         assert result.denied_by == "NoWriteDown(BLP-Star)"
@@ -367,6 +383,7 @@ class TestWritePipeline:
             content="explain test", target_sensitivity=Clearance.L1_INTERNAL,
             target_layer=Layer.CONCLUSION, memory_type=MemoryType.SEMANTIC,
             input_mems=[intel_mem], op=WriteOp.VERBATIM,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert result.allowed
         explanation = result.explain()
@@ -388,7 +405,8 @@ class TestReadPipeline:
                           task_binding="task-1", epoch=1)
         mem_store.put(mem)
 
-        result = read_pipe.read(agent=analyst, session=session, chunk_id="read-me")
+        result = read_pipe.read(agent=analyst, session=session, chunk_id="read-me",
+                                scope=_PERMISSIVE_SCOPE)
         assert result.allowed
         assert result.memory.chunk_id == "read-me"
 
@@ -401,7 +419,8 @@ class TestReadPipeline:
         mem_store.put(mem)
 
         exec_sess = Session.start("s-e1", executor, "task-1")
-        result = read_pipe.read(agent=executor, session=exec_sess, chunk_id="secret-1")
+        result = read_pipe.read(agent=executor, session=exec_sess, chunk_id="secret-1",
+                                scope=_PERMISSIVE_SCOPE)
         assert not result.allowed
         assert not result.hidden
         assert result.var_handle is None
@@ -416,12 +435,14 @@ class TestReadPipeline:
                           task_binding="other-task", epoch=1)
         mem_store.put(mem)
 
-        result = read_pipe.read(agent=analyst, session=session, chunk_id="other-task-mem")
+        result = read_pipe.read(agent=analyst, session=session, chunk_id="other-task-mem",
+                                scope=_PERMISSIVE_SCOPE)
         assert not result.allowed
         assert result.denied_by == "NeedToKnow"
 
     def test_read_not_found(self, read_pipe, analyst, session):
-        result = read_pipe.read(agent=analyst, session=session, chunk_id="nonexistent")
+        result = read_pipe.read(agent=analyst, session=session, chunk_id="nonexistent",
+                                scope=_PERMISSIVE_SCOPE)
         assert not result.allowed
         assert result.denied_by == "NotFound"
 
@@ -435,7 +456,8 @@ class TestReadPipeline:
 
         # analyst starts at T2
         assert session.t_eff == Trust.T2_MEDIUM
-        result = read_pipe.read(agent=analyst, session=session, chunk_id="low-t")
+        result = read_pipe.read(agent=analyst, session=session, chunk_id="low-t",
+                                scope=_PERMISSIVE_SCOPE)
         assert result.allowed
         assert result.t_eff_dropped
         assert session.t_eff == Trust.T0_UNTRUSTED
@@ -483,6 +505,7 @@ class TestReadPipeline:
         results = read_pipe.read_many(
             agent=analyst, session=session,
             chunk_ids=["batch-0", "batch-1", "batch-2", "batch-3", "batch-4"],
+            scope=_PERMISSIVE_SCOPE,
         )
         assert all(r.allowed for r in results)
         assert len(results) == 5
@@ -494,7 +517,8 @@ class TestReadPipeline:
                           task_binding="task-1", collab_group={"sec"}, epoch=1)
         mem_store.put(mem)
 
-        read_pipe.read(agent=analyst, session=session, chunk_id="audit-read")
+        read_pipe.read(agent=analyst, session=session, chunk_id="audit-read",
+                       scope=_PERMISSIVE_SCOPE)
         # Audit logged for allowed read
         assert len(audit_store.events) == 1
         assert audit_store.events[0].action == "READ"
@@ -506,7 +530,8 @@ class TestReadPipeline:
                           task_binding="task-1", epoch=1)
         mem_store.put(mem)
 
-        result = read_pipe.read(agent=analyst, session=session, chunk_id="explain-r")
+        result = read_pipe.read(agent=analyst, session=session, chunk_id="explain-r",
+                                scope=_PERMISSIVE_SCOPE)
         explanation = result.explain()
         assert "ALLOW" in explanation
         assert "READ" in explanation
@@ -529,13 +554,15 @@ class TestWriteThenRead:
             target_layer=Layer.CONCLUSION,
             memory_type=MemoryType.INTEL,
             input_mems=[intel_mem], op=WriteOp.VERBATIM,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert w_result.allowed
         cid = w_result.chunk_id
 
         # Read (fresh session)
         new_sess = Session.start("s-readback", analyst, "task-1")
-        r_result = read_pipe.read(agent=analyst, session=new_sess, chunk_id=cid)
+        r_result = read_pipe.read(agent=analyst, session=new_sess, chunk_id=cid,
+                                  scope=_PERMISSIVE_SCOPE)
         assert r_result.allowed
         assert r_result.memory.chunk_id == cid
 
@@ -551,7 +578,8 @@ class TestWriteThenRead:
 
         # 1. Read low-trust intel (triggers LOMAC)
         assert session.t_eff == Trust.T2_MEDIUM
-        r_result = read_pipe.read(agent=analyst, session=session, chunk_id="dirty-intel")
+        r_result = read_pipe.read(agent=analyst, session=session, chunk_id="dirty-intel",
+                                  scope=_PERMISSIVE_SCOPE)
         assert r_result.allowed
         assert r_result.t_eff_dropped
         assert session.t_eff == Trust.T0_UNTRUSTED
@@ -564,6 +592,7 @@ class TestWriteThenRead:
             target_layer=Layer.CONCLUSION,
             memory_type=MemoryType.INTEL,
             input_mems=[dirty], op=WriteOp.INFER,
+            scope=_PERMISSIVE_SCOPE,
         )
         assert not w_result.allowed
         assert w_result.denied_by == "P-T-ControlFlow"
@@ -611,3 +640,55 @@ class TestTaskScopeWrite:
             scope=scope,
         )
         assert result.allowed
+
+
+# ══════════════════════════════════════════════════════════════
+# F-29：CONSULT 内容级泄漏降级（设计文档第十部分第 2 条）
+# ══════════════════════════════════════════════════════════════
+
+def test_F29_consult_session_write_is_marked_and_capped(write_pipe, analyst, session):
+    """CONSULT 会话内写回（即便 input_mems 为空、绕开 I14 标识符级阻断）
+    必须强制钳制可信度到 ≤ T1 并打 derived_from_consult 标记。"""
+    session.consult("dirty-1")   # 本会话 CONSULT 读过脏情报
+
+    r = write_pipe.write(
+        agent=analyst, session=session,
+        content="我的独立结论（用自己的话复述）",
+        target_sensitivity=Clearance.L0_PUBLIC,
+        target_layer=Layer.CONCLUSION,
+        memory_type=MemoryType.INTEL,
+        input_mems=[],           # 不引用原始脏情报 → 绕过 I14 的 chunk_id 检查
+        op=WriteOp.INFER,
+        scope=_PERMISSIVE_SCOPE,
+    )
+    assert r.allowed, f"CONSULT 派生写回应允许但被降级，实际 denied_by={r.denied_by}"
+    assert r.memory.derived_from_consult is True
+    assert r.memory.provenance_trust <= Trust.T1_LOW
+
+
+def test_F29_marked_memory_cannot_drive_high_risk(write_pipe, analyst, session, topo):
+    """CONSULT 派生记忆不能驱动高危动作（firewall_block required T3）。"""
+    session.consult("dirty-1")
+    r = write_pipe.write(
+        agent=analyst, session=session,
+        content="我的独立结论（复述）",
+        target_sensitivity=Clearance.L0_PUBLIC,
+        target_layer=Layer.CONCLUSION,
+        memory_type=MemoryType.INTEL,
+        input_mems=[], op=WriteOp.INFER, scope=_PERMISSIVE_SCOPE,
+    )
+    assert r.allowed and r.memory.derived_from_consult
+
+    executor = AgentLabel(agent_id="executor-1", role=Role.EXECUTOR,
+                          clearance=Clearance.L1_INTERNAL,
+                          trust_intrinsic=Trust.T3_HIGH,
+                          task_domain={"task-1"}, collab_group={"sec"},
+                          tool_scope={"firewall_block"}, epoch=1)
+    pdp = PDP(topo)
+    sess = Session.start("s-exec", executor, "task-1")
+    d = pdp.can_invoke(executor, sess, "firewall_block", "fp",
+                       provenance=[r.memory])
+    assert d.verdict is Verdict.DENY
+    # 拒绝必须命中 CONSULT 派生或溯源可信度不足，而非工具范围等其他原因
+    assert d.denied_by in ("P-T-ConsultDerived", "P-T-Provenance"), \
+        f"denied_by={d.denied_by}"

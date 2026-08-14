@@ -94,3 +94,55 @@ class ProvenanceLink(Base):
     delta = Column(Integer, nullable=False)
     trust_out = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ──────────────────────────────────────────────────────────────
+# 业务数据表 —— SOC 工具的真实数据源（本地方便演示，接 SQLite）
+# ──────────────────────────────────────────────────────────────
+
+class Asset(Base):
+    """资产台账：内网主机 / 服务器 / 网络设备的清单。"""
+    __tablename__ = "assets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    asset_id = Column(String(64), unique=True, nullable=False, index=True)
+    hostname = Column(String(128), nullable=False)
+    ip = Column(String(64), nullable=False, index=True)
+    os = Column(String(64), default="")
+    owner = Column(String(64), default="")
+    env = Column(String(32), default="internal")   # internal / dmz / prod
+    sensitivity = Column(Integer, nullable=False, default=1)   # Clearance int
+    trust = Column(Integer, nullable=False, default=3)         # Trust int
+    tags = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SiemLog(Base):
+    """SIEM 日志：内部安全日志平台的原始事件。"""
+    __tablename__ = "siem_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(DateTime, nullable=False, index=True)
+    source_ip = Column(String(64), index=True)
+    dest_ip = Column(String(64), index=True)
+    hostname = Column(String(128), default="")
+    event_type = Column(String(32), nullable=False, index=True)  # login_failed / login_success / process_inject ...
+    user = Column(String(64), default="")
+    outcome = Column(String(16), default="")                     # success / failure
+    raw = Column(Text, default="")
+    sensitivity = Column(Integer, nullable=False, default=1)
+    trust = Column(Integer, nullable=False, default=3)
+
+
+class ThreatIntel(Base):
+    """威胁情报：外部/内部情报源的结构化 IOC 与 TTP。"""
+    __tablename__ = "threat_intel"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ioc_type = Column(String(16), nullable=False, index=True)    # ip / domain / hash / cve / url
+    ioc_value = Column(String(256), nullable=False, index=True)
+    source = Column(String(128), default="")
+    confidence = Column(Integer, nullable=False, default=1)      # Trust int
+    ttp = Column(String(128), default="")
+    description = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)

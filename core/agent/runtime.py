@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterator
 
-from core.labels import AgentLabel, Trust, fmt
+from core.labels import AgentLabel, Trust, MemoryLabel, Layer, MemoryType, fmt
 from core.pdp import PDP, Decision
 from core.session import Session
 from core.topology import Topology
@@ -161,7 +161,7 @@ class AgentRuntime:
 
                     self._conversation.append({
                         "role": "user",
-                        "content": f"[Tool result for {tc.name}]: {result.output}",
+                        "content": f"[Tool result for {tc.name}]: {self._tool_output(result)}",
                     })
             else:
                 self._status = "done"
@@ -181,11 +181,43 @@ class AgentRuntime:
     def _execute_tool(self, tc) -> ToolResult:
         """Execute a single tool call, gated through PDP can_invoke."""
         fp = self._tool_fingerprint(tc)
-        decision = self.memory.can_invoke_tool(tc.name, action_fingerprint=fp)
+        # 传入本会话已读记忆的 provenance，让 P-T-Provenance 对高危工具真正生效，
+        # 而非「无 provenance 参数」恒 PASS（自我申报）。
+        decision = self.memory.can_invoke_tool(
+            tc.name, action_fingerprint=fp, provenance=self._session_provenance())
         if decision.verdict != Verdict.ALLOW:
             deny_msg = f"PDP DENIED tool '{tc.name}': {decision.verdict.value}"
-            return ToolResult(success=False, output=deny_msg)
+            return ToolResult(tool_name=tc.name, success=False, output=deny_msg)
         return self._tools.execute(tc.name, tc.arguments)
+
+    def _session_provenance(self) -> list:
+        """从本会话已读记忆（session.reads）构造 provenance 标签。
+
+        can_invoke 的 P-T-Provenance 只取 MemoryLabel.provenance_trust 与
+        derived_from_consult 两个字段，故此处用 ReadRecord 轻量重建即可。
+        """
+        sess = self.memory.session
+        labels: list = []
+        for rec in sess.reads:
+            labels.append(MemoryLabel(
+                chunk_id=rec.chunk_id,
+                sensitivity=rec.sensitivity,
+                provenance_trust=rec.trust,
+                layer=Layer.CONCLUSION,
+                memory_type=MemoryType.EPISODIC,
+                owner_agent=self.agent.agent_id,
+                task_binding=sess.task_id,
+                derived_from_consult=rec.chunk_id in sess.consulted,
+            ))
+        return labels
+
+    @staticmethod
+    def _tool_output(result: ToolResult) -> str:
+        """STUB 结果统一加醒目标记，防止下游把占位数据当真实证据采信。"""
+        if result.is_stub:
+            return ("[STUB 占位数据·非真实数据源·禁止作为研判或处置依据] "
+                    + result.output)
+        return result.output
 
     def _handle_tool_calls(self, resp: LLMResponse,
                            tool_schemas: list[dict] | None) -> None:
@@ -199,7 +231,7 @@ class AgentRuntime:
             tool_contents.append({
                 "type": "tool_result",
                 "tool_use_id": tc.id,
-                "content": result.output,
+                "content": self._tool_output(result),
             })
 
         if tool_contents:

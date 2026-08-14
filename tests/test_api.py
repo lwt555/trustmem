@@ -317,6 +317,28 @@ class TestWebSocket:
             assert data["decision_verdict"] == "ALLOW"
             assert data["merkle_root"] is not None
 
+    def test_ws_watermarks_exposed(self, client):
+        """F-30：/ws/step 必须暴露双水位 + 控制流隔离水位 + 4 bit 容量预算。"""
+        with client.websocket_connect("/ws/step") as ws:
+            ws.send_json({
+                "step_type": "write",
+                "payload": {
+                    "agent_id": "analyst", "session_id": "ws-wm-1",
+                    "content": "watermark exposure test", "sensitivity": "L2",
+                    "layer": "C", "memory_type": "INTEL",
+                },
+            })
+            data = ws.receive_json()
+            wm = data["watermarks"]
+            assert wm is not None, "watermarks 必须随 StepResult 返回"
+            assert set(wm) >= {"c_eff", "t_eff", "t_eff_ctl",
+                               "capacity_used_bits", "capacity_budget_bits"}
+            assert wm["capacity_budget_bits"] == 4.0
+            assert wm["c_eff"].startswith("L")
+            assert wm["t_eff"].startswith("T")
+            assert wm["t_eff_ctl"].startswith("T")
+            assert wm["capacity_used_bits"] >= 0.0
+
     def test_ws_read_allow_step(self, client):
         # First write via REST
         w = client.post("/api/write", json={

@@ -23,13 +23,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .schemas import (
     WriteRequest, WriteResponse,
     ReadRequest, ReadResponse, ReadManyRequest,
-    SystemStats, StepMessage, StepResult, VarHandleInfo, AgentInfo,
+    SystemStats, StepMessage, StepResult, VarHandleInfo, AgentInfo, Watermarks,
     ScenarioRunRequest, ScenarioStatusResponse, AgentStatusResponse,
 )
 from .deps import (
@@ -45,6 +50,8 @@ from scenarios.scenario_registry import SCENARIOS
 from .ws_graph import handle_graph_ws
 from .audit import router as audit_router
 
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 app = FastAPI(title="TrustMem API", version="1.0.0")
 
 app.add_middleware(
@@ -56,6 +63,16 @@ app.add_middleware(
 )
 
 app.include_router(audit_router)
+
+
+# ── Console (new frontend) ──────────────────────────────────
+
+_CONSOLE_PATH = Path(__file__).resolve().parents[2] / "console.html"
+
+
+@app.get("/", include_in_schema=False)
+def serve_console():
+    return FileResponse(_CONSOLE_PATH, media_type="text/html")
 
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -102,11 +119,21 @@ def _parse_write_op(s: str) -> WriteOp:
         return WriteOp[s.upper()]
 
 
-def _build_task_scope(req) -> TaskScope | None:
+def _default_scope(task_id: str = "") -> TaskScope:
+    """无 scope 字段时退回宽松区间（F-22：scope 必填，不再允许 None）。"""
+    return TaskScope(
+        task_id=task_id,
+        c_ctx_max=Clearance.L3_SECRET,
+        t_ctx_min=Trust.T0_UNTRUSTED,
+        ingest=IngestMode.LEARN,
+    )
+
+
+def _build_task_scope(req) -> TaskScope:
     """Extract TaskScope from a request if scope fields are present."""
-    if not req.scope_c_max and not req.scope_t_min:
-        return None
     task_id = getattr(req, "task_id", None) or ""
+    if not req.scope_c_max and not req.scope_t_min:
+        return _default_scope(task_id)
     ingest_str = getattr(req, "scope_ingest", None)
     if ingest_str and ingest_str.upper() == "CONSULT":
         ingest = IngestMode.CONSULT
@@ -134,6 +161,17 @@ def _build_var_info(result) -> VarHandleInfo | None:
         reason=vh.reason,
         constraint_types=list(vh.constraint_types),
         metadata=vh.metadata,
+    )
+
+
+def _build_watermarks(session) -> Watermarks:
+    """Expose session watermarks to the frontend (F-30)."""
+    return Watermarks(
+        c_eff=fmt(session.c_eff),
+        t_eff=fmt(session.t_eff),
+        t_eff_ctl=fmt(session.t_eff_ctl),
+        capacity_used_bits=session.capacity_used_bits,
+        capacity_budget_bits=session.CAPACITY_BUDGET_BITS,
     )
 
 
@@ -382,6 +420,7 @@ async def ws_step(websocket: WebSocket):
                     input_mems=[],
                     op=_parse_write_op(p.get("op", "INFER")),
                     task_binding=p.get("task_id"),
+                    scope=_default_scope(p.get("task_id", "") or ""),
                 )
                 step = StepResult(
                     step_type="write", allowed=result.allowed, hidden=False,
@@ -390,6 +429,7 @@ async def ws_step(websocket: WebSocket):
                     checks=_format_checks(result.checks),
                     side_effects=result.side_effects,
                     merkle_root=get_merkle_audit().root.hex(),
+                    watermarks=_build_watermarks(session),
                 )
 
             elif msg.step_type == "read":
@@ -397,7 +437,6 @@ async def ws_step(websocket: WebSocket):
                 agent = agents[p["agent_id"]]
                 sid = p.get("session_id", "ws-session")
                 session = store.get_or_start(sid, agent, p.get("task_id", "ws-task"))
-                scope = None
                 if p.get("scope_c_max") or p.get("scope_t_min"):
                     scope = TaskScope(
                         task_id=p.get("task_id", "") or "",
@@ -407,6 +446,8 @@ async def ws_step(websocket: WebSocket):
                                 if str(p.get("scope_ingest", "")).upper() == "CONSULT"
                                 else IngestMode.LEARN),
                     )
+                else:
+                    scope = _default_scope(p.get("task_id", "") or "")
                 result = read_pipe.read(agent=agent, session=session, chunk_id=p["chunk_id"], scope=scope)
 
                 step = StepResult(
@@ -418,6 +459,7 @@ async def ws_step(websocket: WebSocket):
                     side_effects=result.side_effects,
                     merkle_root=get_merkle_audit().root.hex(),
                     var_handle=_build_var_info(result),
+                    watermarks=_build_watermarks(session),
                 )
 
             else:
@@ -524,5 +566,7 @@ def get_agent_status(agent_id: str):
 
 def create_app() -> FastAPI:
     from backend.db.database import init_db
+    from backend.db.seed import seed
     init_db()
+    seed(get_db_store().db)   # 建业务数据表并灌入演示数据（幂等）
     return app

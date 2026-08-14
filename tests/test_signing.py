@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer,
-                         MemoryType, Role)
+                         MemoryType, Role, TaskScope)
 from core.session import Session
 from core.topology import Topology
 from core.pdp import PDP
@@ -104,7 +104,8 @@ def test_F14_read_verifies_signature():
     st.s["m1"]["mem"] = replace(mem, provenance_trust=Trust.T3_HIGH)
 
     pipe = ReadPipeline(PDP(topo), None, st, _Audit(), verifier=signer)
-    r = pipe.read(agent=agent, session=sess, chunk_id="m1")
+    r = pipe.read(agent=agent, session=sess, chunk_id="m1",
+                  scope=TaskScope("t", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
     assert r.decision.verdict is Verdict.DENY
     assert r.denied_by == "SignatureInvalid"
 

@@ -202,8 +202,8 @@ def test_07_consulted_persists_across_operations():
 # ══════════════════════════════════════════════════════════════
 def test_08_derive_scope_egress_caps_clearance():
     scope = derive_taskscope("t-egress",
-        declared_exports={"api.respond"},
-        declared_tools={"web_search"},  # network egress
+        declared_exports={"web_search"},  # network egress
+        declared_tools=set(),
         task_max_clearance=Clearance.L3_SECRET)
     assert scope.c_ctx_max == Clearance.L0_PUBLIC, \
         f"network egress should cap clearance, got {scope.c_ctx_max}"

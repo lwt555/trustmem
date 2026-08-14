@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer,
-                         MemoryType, Role, WriteOp)
+                         MemoryType, Role, WriteOp, TaskScope)
 from core.session import Session
 from core.topology import Topology
 from core.pdp import PDP, Decision
@@ -55,7 +55,7 @@ def test_F16_confirm_blocks_pipeline_until_approved():
     from core.pipeline import ReadPipeline
 
     class _PDP:
-        def can_read(self, agent, mem, session, now=None, epoch_current=None):
+        def can_read_scoped(self, agent, mem, session, scope, now=None, epoch_current=None):
             return Decision(Verdict.CONFIRM, "READ", agent.agent_id, mem.chunk_id,
                             [], denied_by="HumanInTheLoop",
                             session_id=session.session_id)
@@ -85,7 +85,8 @@ def test_F16_confirm_blocks_pipeline_until_approved():
 
     with hitl_policy("deny"):
         pipe = ReadPipeline(_PDP(), None, _Store(), _Audit())
-        r = pipe.read(agent=agent, session=sess, chunk_id="confirm-chunk")
+        r = pipe.read(agent=agent, session=sess, chunk_id="confirm-chunk",
+                      scope=TaskScope("t", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
         assert r.allowed is False
         assert r.plaintext is None
 

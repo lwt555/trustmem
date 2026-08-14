@@ -37,10 +37,10 @@ TrustMem 的可信流转建立在两条偏序格上：
 | ID | 触发事件 | 变化 | 依据 | 代码位置 |
 |---|---|---|---|---|
 | TR10 | CONSULT 读入的 chunk 出现在 input_mems | 直接 DENY，不进入衰减计算 | CONSULT 禁写回 I14 | `core/pdp.py:256` |
-| TR6 | 写出一条新记忆 | trust_out ≤ meet(输入集合, 主体 t_eff)，取最弱一环，不是 max / 均值 | Biba 无写上（no write up） | `core/decay.py:94` |
-| TR7 | 声明 δ=0 的操作（VERBATIM / EXTRACT）但校验失败 | op 强制降为 INFER（δ=1），可信度再降一级 | 谎报降级（δ=0 声明必须可验证） | `core/decay.py:64` |
-| TR8 | LLM 加工一条输入（SUMMARIZE / INFER / FUSE） | trust_out 额外减去 δ(op) | 加工衰减（LLM 过程本身引入不确定性） | `core/decay.py:94` |
-| TR9 | 跨源融合（FUSE）多条输入 | trust_out ≤ meet(全部输入)，取最脏一环 | 融合取脏（一颗老鼠屎坏一锅汤） | `core/decay.py:94` |
+| TR6 | 写出一条新记忆 | trust_out ≤ meet(输入集合, 主体 t_eff)，取最弱一环，不是 max / 均值 | Biba 无写上（no write up） | `core/decay.py:98` |
+| TR7 | 声明 δ=0 的操作（VERBATIM / EXTRACT）但校验失败 | op 强制降为 INFER（δ=1），可信度再降一级 | 谎报降级（δ=0 声明必须可验证） | `core/decay.py:65` |
+| TR8 | LLM 加工一条输入（SUMMARIZE / INFER / FUSE） | trust_out 额外减去 δ(op) | 加工衰减（LLM 过程本身引入不确定性） | `core/decay.py:98` |
+| TR9 | 跨源融合（FUSE）多条输入 | trust_out ≤ meet(全部输入)，取最脏一环 | 融合取脏（一颗老鼠屎坏一锅汤） | `core/decay.py:98` |
 
 ### C 组 · 越格（唯一上升通道：背书门）
 

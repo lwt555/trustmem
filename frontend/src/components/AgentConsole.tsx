@@ -1,13 +1,30 @@
 import { useState, useRef, useEffect } from "react";
-import type { GraphEvent } from "../types";
+import type { GraphEvent, Watermarks } from "../types";
 
 interface Props {
   selectedAgent: string | null;
   graphEvents: GraphEvent[];
   agentStatuses: Record<string, { status: string; t_eff: string }>;
+  watermarks: Watermarks | null;
 }
 
-export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses }: Props) {
+/** Parse "L0".."L3" / "T0".."T3" → 0..3 (missing → 0). */
+function levelOf(s: string): number {
+  const n = parseInt(s.replace(/[^0-9]/g, ""), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const GAUGE_W = 280;
+const GAUGE_L = 22;
+const GAUGE_R = GAUGE_W - 22;
+const AXIS = GAUGE_R - GAUGE_L;
+
+/** Map a 0..3 level onto the horizontal track: 0 → left, 3 → right. */
+function xOf(level: number): number {
+  return GAUGE_L + (level / 3) * AXIS;
+}
+
+export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses, watermarks }: Props) {
   const [tab, setTab] = useState<"thought" | "actions" | "memory">("thought");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -39,6 +56,21 @@ export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses
 
   const status = selectedAgent ? agentStatuses[selectedAgent] : null;
 
+  // ── F-30 双水位标尺：对接后端 /ws/step 返回的 watermarks ──
+  const c = watermarks?.c_eff ?? "?";
+  const t = watermarks?.t_eff ?? "?";
+  const ctl = watermarks?.t_eff_ctl ?? "?";
+  const used = watermarks?.capacity_used_bits ?? 0;
+  const budget = watermarks?.capacity_budget_bits ?? 4;
+
+  const cLevel = levelOf(c);
+  const tLevel = levelOf(t);
+  const ctlLevel = levelOf(ctl);
+  const cx = xOf(cLevel);
+  const tx = xOf(tLevel);
+  const ctlX = xOf(ctlLevel);
+  const capacityPct = budget > 0 ? Math.min(100, (used / budget) * 100) : 0;
+
   return (
     <div className="h-full flex flex-col bg-slate-900 border-l border-slate-700">
       {/* Header */}
@@ -53,11 +85,61 @@ export default function AgentConsole({ selectedAgent, graphEvents, agentStatuses
             {status.status}
           </span>
         )}
-        {status && status.t_eff !== "?" && (
-          <span className="text-[10px] text-slate-500 ml-auto">
-            T_eff: {status.t_eff}
-          </span>
-        )}
+      </div>
+
+      {/* 双水位标尺 (F-30)：c_eff 只升（向右）、t_eff 只降（向左），相向而行 */}
+      <div className="px-3 py-2 border-b border-slate-700 bg-slate-950/40">
+        <svg viewBox={`0 0 ${GAUGE_W} 30`} className="w-full">
+          {/* axis */}
+          <line x1={GAUGE_L} y1={12} x2={GAUGE_R} y2={12} stroke="#334155" strokeWidth={2} />
+          {/* ticks 0..3 */}
+          {[0, 1, 2, 3].map((lv) => {
+            const x = xOf(lv);
+            return (
+              <g key={lv}>
+                <line x1={x} y1={8} x2={x} y2={16} stroke="#1e293b" strokeWidth={1} />
+                <text x={x} y={27} textAnchor="middle" fill="#475569" fontSize={7} fontFamily="monospace">
+                  {lv}
+                </text>
+              </g>
+            );
+          })}
+          {/* c_eff pointer（蓝，向右升） */}
+          <polygon points={`${cx},12 ${cx - 6},5 ${cx - 6},19`} fill="#60a5fa" />
+          <text x={cx} y={4} textAnchor="middle" fill="#60a5fa" fontSize={8} fontWeight={700} fontFamily="monospace">
+            {c === "?" ? "c" : c}
+          </text>
+          {/* t_eff pointer（橙，向左降） */}
+          <polygon points={`${tx},12 ${tx + 6},5 ${tx + 6},19`} fill="#f97316" />
+          <text x={tx} y={4} textAnchor="middle" fill="#f97316" fontSize={8} fontWeight={700} fontFamily="monospace">
+            {t === "?" ? "t" : t}
+          </text>
+          {/* t_eff_ctl marker（紫虚线） */}
+          <line x1={ctlX} y1={6} x2={ctlX} y2={18} stroke="#a78bfa" strokeWidth={1.5} strokeDasharray="3 2" />
+        </svg>
+
+        <div className="flex items-center justify-between mt-1 text-[9px] text-slate-500 font-mono">
+          <span>c_eff <span className="text-blue-400">{c}</span>↑</span>
+          <span>t_eff <span className="text-orange-400">{t}</span>↓</span>
+          <span>ctl <span className="text-purple-400">{ctl}</span></span>
+        </div>
+
+        {/* 4 bit 容量预算 */}
+        <div className="mt-1">
+          <div className="flex items-center justify-between text-[9px] text-slate-500">
+            <span>容量</span>
+            <span className="font-mono">{used.toFixed(1)}/{budget.toFixed(1)} bit</span>
+          </div>
+          <div className="h-1 rounded bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded transition-all duration-300"
+              style={{
+                width: `${capacityPct}%`,
+                background: capacityPct >= 100 ? "#ef4444" : capacityPct >= 75 ? "#f59e0b" : "#22c55e",
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}

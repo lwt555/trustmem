@@ -253,15 +253,16 @@ def test_I11_session_isolation(trials=2000, seed=17):
 def test_I12_derive_scope_consistent():
     s1 = derive_taskscope("t-safe", {"api.respond"}, {"log_query"},
                           Clearance.L3_SECRET)
-    assert s1.c_ctx_max == Clearance.L3_SECRET
-    assert s1.t_ctx_min <= Trust.T2_MEDIUM
+    assert s1.c_ctx_max == Clearance.L1_INTERNAL
+    assert s1.t_ctx_min == Trust.T1_LOW
 
-    s2 = derive_taskscope("t-egress", {"api.respond"}, {"web_search"},
+    s2 = derive_taskscope("t-egress", {"web_search"}, set(),
                           Clearance.L3_SECRET)
     assert s2.c_ctx_max == Clearance.L0_PUBLIC
 
     s3 = derive_taskscope("t-high", {"memory.write"}, {"host_isolate"},
                           Clearance.L3_SECRET)
+    assert s3.c_ctx_max == Clearance.L3_SECRET
     assert s3.t_ctx_min == Trust.T3_HIGH
 
 

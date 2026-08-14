@@ -184,7 +184,7 @@ class WritePipeline:
         input_texts: list[str] | None = None,
         schema_ok: bool | None = None,
         ttl_end: datetime | None = None,
-        scope: TaskScope | None = None,
+        scope: TaskScope,
         anchor: object | None = None,
     ) -> WriteResult:
         """Execute the full write pipeline."""
@@ -254,6 +254,16 @@ class WritePipeline:
             declassified=declassify_approved,
             ttl_end=ttl_end,
         )
+
+        # 4.5 CONSULT 内容级泄漏降级（F-29）：本会话若 CONSULT 读过任何内容，
+        # 即便「用自己的话复述」写回（input_mems 为空，绕开 I14 的标识符级阻断），
+        # 也强制把可信度钳制到 ≤ T1 并打标——进得去，但驱动不了高危动作。
+        if session.consulted:
+            capped = Trust(min(int(mem.provenance_trust), int(Trust.T1_LOW)))
+            mem.provenance_trust = capped
+            mem.derived_from_consult = True
+            side_effects.append(
+                f"F-29: CONSULT 派生写回，provenance_trust 钳制到 {fmt(capped)}")
 
         # 5. Encrypt content
         ct = self.crypto.encrypt_memory(content, mem)
@@ -340,7 +350,7 @@ class ReadPipeline:
         chunk_id: str,
         now: datetime | None = None,
         epoch_current: int | None = None,
-        scope: TaskScope | None = None,
+        scope: TaskScope,
         anchor: object | None = None,
     ) -> ReadResult:
         """Execute the full read pipeline with HIDE support."""
@@ -472,7 +482,7 @@ class ReadPipeline:
     def read_many(
         self, *, agent: AgentLabel, session: Session,
         chunk_ids: list[str],
-        scope: TaskScope | None = None,
+        scope: TaskScope,
     ) -> list[ReadResult]:
         """Batch read multiple chunks. Each gets its own PDP check."""
         return [self.read(agent=agent, session=session,

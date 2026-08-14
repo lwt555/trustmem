@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from core.labels import (AgentLabel, MemoryLabel, Clearance, Trust, Layer,
-                         MemoryType, Role)
+                         MemoryType, Role, TaskScope)
 from core.session import Session
 from core.topology import Topology
 from core.pdp import PDP
@@ -96,13 +96,15 @@ def test_F12_decrypt_count_equals_allow_count():
     sess = Session.start("s", agent, "task-x")
 
     # ALLOW：analyst 读自己密级内的 L2 记忆
-    r1 = pipe.read(agent=agent, session=sess, chunk_id=allow_mem.chunk_id)
+    r1 = pipe.read(agent=agent, session=sess, chunk_id=allow_mem.chunk_id,
+                   scope=TaskScope("task-x", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
     assert r1.decision.verdict is Verdict.ALLOW
     assert r1.plaintext == b"decrypted-content"
     assert client.decrypt_count == 1
 
     # DENY：读 L3 记忆（硬拒绝），不得解密
-    r2 = pipe.read(agent=agent, session=sess, chunk_id=deny_mem.chunk_id)
+    r2 = pipe.read(agent=agent, session=sess, chunk_id=deny_mem.chunk_id,
+                   scope=TaskScope("task-x", Clearance.L3_SECRET, Trust.T0_UNTRUSTED))
     assert r2.decision.verdict is Verdict.DENY
     assert r2.plaintext is None
     assert client.decrypt_count == 1, "DENY 不得触发解密"

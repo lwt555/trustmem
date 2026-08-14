@@ -384,6 +384,12 @@ class PDP:
             ok_prov = t_prov >= req
             ck.append(Check("P-T-Provenance", ok_prov,
                             f"provenance min={fmt(t_prov)} ⊒ required({fmt(req)})"))
+
+            # F-29：CONSULT 派生记忆不得作为高危动作的 provenance（内容级泄漏兜底）
+            consult_derived = [m for m in provenance if m.derived_from_consult]
+            ck.append(Check("P-T-ConsultDerived", not consult_derived,
+                            "无 CONSULT 派生记忆" if not consult_derived else
+                            f"provenance 含 {[m.chunk_id for m in consult_derived]} CONSULT 派生，禁止驱动高危动作"))
         else:
             ck.append(Check("P-T-Provenance", True, "无 provenance 参数"))
 

@@ -145,6 +145,15 @@ class StepMessage(BaseModel):
     payload: dict[str, Any]
 
 
+class Watermarks(BaseModel):
+    """Session watermarks exposed to the frontend (F-30: dual-gauge visualization)."""
+    c_eff: str            # 机密性高水位（只升）
+    t_eff: str            # 完整性低水位（只降）
+    t_eff_ctl: str        # LLM 控制流隔离水位
+    capacity_used_bits: float
+    capacity_budget_bits: float
+
+
 class StepResult(BaseModel):
     """WebSocket: single-step result pushed to client."""
     step_type: str
@@ -156,6 +165,7 @@ class StepResult(BaseModel):
     side_effects: list[str] = Field(default_factory=list)
     merkle_root: str | None = None
     var_handle: VarHandleInfo | None = None
+    watermarks: Watermarks | None = None
 
 
 # ── Scenario / Graph ─────────────────────────────────────────

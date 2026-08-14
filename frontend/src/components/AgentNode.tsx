@@ -10,11 +10,20 @@ interface Props {
   lastVerdict: string | null; // "ALLOW" | "HIDE" | "DENY" | null
 }
 
+// F-30：填充深浅 = 机密性（L0 最浅 → L3 最深）
+const FILL_DEPTH: Record<string, number> = {
+  L0: 0.08,
+  L1: 0.16,
+  L2: 0.28,
+  L3: 0.42,
+};
+
 export default function AgentNode({ agent, x, y, active, lastVerdict }: Props) {
   const cLevel = agent.clearance; // "L0".."L3"
   const tLevel = agent.trust; // "T0".."T3"
   const borderColor = TRUST_COLORS[tLevel] ?? "#666";
   const fillColor = CLEARANCE_COLORS[cLevel] ?? "#666";
+  const fillDepth = FILL_DEPTH[cLevel] ?? 0.15;
 
   // Pulse animation on verdict change
   const [pulse, setPulse] = useState(false);
@@ -40,13 +49,14 @@ export default function AgentNode({ agent, x, y, active, lastVerdict }: Props) {
         />
       )}
 
-      {/* Dual watermarks: outer ring = trust (integrity), inner fill = clearance (secrecy) */}
-      <circle cx={x} cy={y} r={42} fill={fillColor} fillOpacity={0.15}
+      {/* Dual watermarks: border = trust (integrity), fill depth = clearance (secrecy) */}
+      <circle cx={x} cy={y} r={42} fill={fillColor} fillOpacity={fillDepth}
               stroke={borderColor} strokeWidth={3} />
 
       {/* Center icon/initials */}
       <circle cx={x} cy={y} r={30} fill={active ? fillColor : "#1e293b"}
-              fillOpacity={0.6} stroke={borderColor} strokeWidth={1.5} />
+              fillOpacity={active ? Math.max(fillDepth, 0.6) : Math.max(fillDepth, 0.3)}
+              stroke={borderColor} strokeWidth={1.5} />
 
       <text x={x} y={y + 5} textAnchor="middle" fill="#f8fafc"
             fontSize={13} fontWeight={700} fontFamily="monospace">

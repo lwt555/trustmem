@@ -40,6 +40,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [writeContent, setWriteContent] = useState("这是演示记忆内容");
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  // 稳定演示会话：水位跨 write/read 步累积（F-30），清空时重建
+  const [demoSessionId, setDemoSessionId] = useState(() => "demo-" + Date.now());
 
   // Connect on mount
   useEffect(() => {
@@ -63,7 +65,7 @@ export default function App() {
       step_type: "write",
       payload: {
         agent_id: cfg.agent || "analyst",
-        session_id: "demo-" + Date.now(),
+        session_id: demoSessionId,
         task_id: cfg.taskId,
         content: writeContent,
         sensitivity: cfg.sensitivity,
@@ -73,7 +75,7 @@ export default function App() {
       },
     });
     setTimeout(() => setBusy(false), 1500);
-  }, [mode, sendStep, setLastResult, writeContent]);
+  }, [mode, sendStep, setLastResult, writeContent, demoSessionId]);
 
   const doRead = useCallback(() => {
     if (!lastChunkId) return;
@@ -84,13 +86,13 @@ export default function App() {
       step_type: "read",
       payload: {
         agent_id: cfg.agent || "executor",
-        session_id: "demo-" + Date.now(),
+        session_id: demoSessionId,
         task_id: cfg.taskId,
         chunk_id: lastChunkId,
       },
     });
     setTimeout(() => setBusy(false), 1500);
-  }, [mode, lastChunkId, sendStep, setLastResult]);
+  }, [mode, lastChunkId, sendStep, setLastResult, demoSessionId]);
 
   // Capture chunk_id from write results
   useEffect(() => {
@@ -106,6 +108,7 @@ export default function App() {
     setHistory([]);
     setLastResult(null);
     setLastChunkId(null);
+    setDemoSessionId("demo-" + Date.now());
     clearGraphEvents();
   }, [setLastResult, clearGraphEvents]);
 
@@ -156,6 +159,7 @@ export default function App() {
             selectedAgent={selectedAgent}
             graphEvents={graphEvents}
             agentStatuses={agentStatuses}
+            watermarks={lastResult?.watermarks ?? null}
           />
         </div>
 

@@ -51,7 +51,14 @@
 | F 编号 | 状态 | 说明 |
 |---|---|---|
 | F-17 | **部分** | `bench/benchmark.py` + `bench/report.md` 已建，但**38 条基准任务集 + 八张表**未全量完成，当前仅覆盖核心模块微基准（表 6/7/8 部分）。 |
-| F-26~F-33 | **未完成** | Role 枚举对齐、`verify_op` 长文本、`tamper_event` 生产接口、CONSULT 内容级泄漏局限、前端双水位标尺、`contract_report.md`/`TEST_REPORT.md` 重写、`make` 目标对齐等完善项。 |
+| F-27 | **已完成** | `verify_op` 长文本：`autojunk=True` + 10KB 上限截断，超长保守降级 INFER（`tests/test_l3_trust_rules.py::test_F27_*`）。 |
+| F-28 | **已完成** | `tamper_event` 加 `TRUSTMEM_ALLOW_TAMPER=1` 门禁 + WARNING 日志，API 层不暴露。 |
+| F-29 | **已完成** | CONSULT 内容级泄漏：写回降级到 ≤ T1 + `derived_from_consult` 标记 + 高危动作拒绝，见第 6 节。 |
+| F-31 | **已完成** | `tools/contract_check.py` + `make contract` 重新生成契约报告。 |
+| F-26 | **未完成** | Role 枚举对齐（Intel/Log vs Retriever/External）。 |
+| F-30 | **部分** | 节点填充深浅=机密性、双水位标尺（c_eff↑/t_eff↓ + t_eff_ctl + 4bit 容量）、粒子三态（ALLOW 实心流过 / HIDE 半透明挂句柄 / DENY 红色撞墙回弹）已落地，`/ws/step` 暴露 `watermarks`。前端「第 3/4 屏」（graph 场景流逐事件水位）仍缺，属提示词 §4.3 明确可推迟项。 |
+| F-32 | **部分** | `make contract`/`rules`/`crypto`/`figures`/`web`/`demo` 已补；`TRUSTMEM_CRYPTO`/`TRUSTMEM_SIGN` 降级路径与 `make demo` 全栈分屏待补。 |
+| F-33 | **已完成** | `TEST_REPORT.md` 已按不变式编号撞车修正重写，含「设计文档不变式 ↔ 测试函数名」对照表。 |
 
 ## 5. 来源元数据的信任假设（F-19 / 设计文档 9.2(c)）
 
@@ -65,7 +72,23 @@
 外部权威（如 BGP 路由注册表、证书透明度日志、权威情报源目录）提供，本项目仿真档不实现，
 仅把局限写明。无 `SourceRegistry` 时退化为二级域去重，抗 Sybil 更弱。
 
-## 6. 如何复现当前结论
+## 6. CONSULT 的内容级泄漏（F-29 / 设计文档第十部分第 2 条）
+
+I14 只做**标识符级**血缘阻断（检查 `input_mems` 的 `chunk_id`），不做**内容级**。审计员可以
+「用自己的话复述」那条脏情报，写成一条 T3 的独立结论——而演示里第 ⑨ 步（审计员写独立结论 → 放行）
+恰恰就是这个洞的入口。
+
+如实交代（原话）：
+
+> 我们保证的是溯源链的结构性隔离，不保证内容级的信息不流动；内容级需要语义比对，
+> 那会把安全边界交回给模型。
+
+这句话与「不靠 LLM 判断」的原则一致，主动交代是加分。对应地实现了一条**降级标记**（F-29）：
+CONSULT 会话内的写回强制降级到 `min(t_intrinsic, T1)` 并标记 `derived_from_consult=True`，
+让它进得去但驱动不了高危动作（`PDP.can_invoke` 对含 `derived_from_consult` 记忆的 provenance
+直接 DENY，规则名 `P-T-ConsultDerived`）。
+
+## 7. 如何复现当前结论
 
 ```bash
 python -m pytest tests/ -q          # 456 passed
@@ -74,7 +97,7 @@ python -m bench.benchmark           # 重跑微基准 → bench/benchmarks.json
 python scripts/generate_figures.py  # 从 bench/*.json 重新出图（禁止硬编码）
 ```
 
-## 7. 门禁现状
+## 8. 门禁现状
 
 §4.2 门禁中 `grep -rn "\.\.\.\|# TODO\|placeholder"` 要求为 0，当前非 0——剩余命中全部来自上文推迟项
 （F-16 CONFIRM 占位、F-11/F-23 的 Protocol 抽象方法 `...`、F-11 的流密码占位等），在对应 F 项完成前属预期。

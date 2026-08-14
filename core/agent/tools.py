@@ -23,6 +23,7 @@ class ToolResult:
     success: bool
     output: str
     error: str | None = None
+    is_stub: bool = False   # STUB 占位数据：非真实数据源，禁止作为研判/处置依据
 
 
 # Stub tool implementations that return realistic demo data
@@ -36,20 +37,22 @@ def _register_stub(name: str, output_template: str):
             tool_name=name,
             success=True,
             output=output_template.format(**kwargs, args=args_str),
+            is_stub=True,
         )
     _STUB_TOOLS[name] = _stub
 
 
-_register_stub("web_search", "[STUB] 搜索 '{query}': 未发现相关威胁情报。")
-_register_stub("intel_fetch", "[STUB] 从情报源获取 IOC: 192.0.2.1 → 恶意软件 C2 (可信度: T1)")
-_register_stub("log_query", "[STUB] SIEM 日志: 最近24h内 {args} 条登录事件，无异常。")
-_register_stub("asset_query", "[STUB] 资产清单: 192.168.1.0/24, 共 47 台主机。")
-_register_stub("file_read", "[STUB] 读取文件内容 (模拟)")
-_register_stub("file_write", "[STUB] 写入文件成功: {args}")
-_register_stub("exec_command", "[STUB] 命令 '{args}' 执行完成 (模拟)")
-_register_stub("firewall_block", "[STUB] 防火墙规则已添加: 阻断 IP {args} (模拟)")
-_register_stub("host_isolate", "[STUB] 主机 {args} 已从网络隔离 (模拟)")
-_register_stub("log_query", "[STUB] SIEM日志查询: {args}")
+# STUB 工具如实声明「未接入真实环境 / 未执行」，不编造演示数据、不谎称动作成功，
+# 否则下游 Agent 会把占位结果当成真实证据或已执行动作（投毒 / 虚假闭环）。
+_register_stub("web_search", "[STUB] 搜索 '{query}': 未接入真实情报源，无可用威胁情报。")
+_register_stub("intel_fetch", "[STUB] 情报源未接入真实数据，无可用 IOC 返回。")
+_register_stub("log_query", "[STUB] SIEM 日志源未接入真实数据，无日志事件返回。")
+_register_stub("asset_query", "[STUB] 资产台账未接入真实数据，无可用资产清单。")
+_register_stub("file_read", "[STUB] 文件读取未执行：无真实文件系统接入。")
+_register_stub("file_write", "[STUB] 文件写入未执行：无真实落盘，未产生任何文件。")
+_register_stub("exec_command", "[STUB] 命令未执行：无真实执行环境接入。")
+_register_stub("firewall_block", "[STUB] 防火墙封禁未执行：无真实网络设备接入，未阻断任何 IP。")
+_register_stub("host_isolate", "[STUB] 主机隔离未执行：无真实隔离能力，未隔离任何主机。")
 
 
 class ToolRegistry:
@@ -67,15 +70,16 @@ class ToolRegistry:
 
     def register_builtin(self, name: str, description: str,
                          parameters: dict, required_trust: Trust | None = None,
-                         requires_hitl: bool | None = None) -> None:
+                         requires_hitl: bool | None = None,
+                         func: Callable | None = None) -> None:
         trust = required_trust if required_trust is not None else \
             TOOL_REQUIRED_TRUST.get(name, Trust.T0_UNTRUSTED)
         hitl = requires_hitl if requires_hitl is not None else \
             name in TOOL_REQUIRE_HITL
-        stub = _STUB_TOOLS.get(name)
+        impl = func if func is not None else _STUB_TOOLS.get(name)
         self.register(ToolDefinition(
             name=name, description=description, parameters=parameters,
-            required_trust=trust, requires_hitl=hitl, func=stub,
+            required_trust=trust, requires_hitl=hitl, func=impl,
         ))
 
     def get(self, name: str) -> ToolDefinition | None:

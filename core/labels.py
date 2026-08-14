@@ -134,6 +134,7 @@ class MemoryLabel:
     declassified: bool = False      # 是否经受控降密网关放行
     ttl_end: datetime | None = None
     upgraded_from: str | None = None  # F-19：提升不改原件，指向被提升的原 chunk_id
+    derived_from_consult: bool = False  # F-29：CONSULT 会话内写回，可信度被钳制到 ≤ T1
 
     def in_ttl(self, now: datetime | None = None) -> bool:
         if self.ttl_end is None:
@@ -255,7 +256,10 @@ class TaskScope:
 
 # 出口工具 → 需要的最低完整性阈值
 EXPORT_TOOL_REQUIRED_TRUST: dict[str, Trust] = {
-    "memory.write": Trust.T2_MEDIUM,     # 写回记忆至少 T2
+    # 写回记忆至少 T1：允许 T1 主体（如外部情报 intel）写回其 T1 记忆。
+    # 上限由 Biba-Star（decay.trust_out <= t_eff）保证 no-write-up；此门仅挡
+    # 控制流已污染到 T0 的主体（FULL 吸收已知污染内容后）写回共享记忆。
+    "memory.write": Trust.T1_LOW,
     "file.write": Trust.T3_HIGH,
     "exec_command": Trust.T3_HIGH,
     "firewall_block": Trust.T3_HIGH,
@@ -298,35 +302,41 @@ EGRESS_READERS: dict[str, Clearance] = {
 
 def derive_taskscope(
     task_id: str,
-    declared_exports: set[str],
-    declared_tools: set[str],
+    declared_exports: set[str] | None = None,
+    declared_tools: set[str] | None = None,
     task_max_clearance: Clearance = Clearance.L3_SECRET,
     default_ingest: IngestMode = IngestMode.LEARN,
+    *,
+    exports: set[str] | None = None,
+    tools: set[str] | None = None,
+    agent: "AgentLabel | None" = None,
 ) -> TaskScope:
     """
-    从任务声明的出口与工具自动推导 TaskScope。
+    从任务声明的出口与工具自动推导 TaskScope（F-22，与设计文档 §2.4 一致）。
 
-    推导规则：
-        c_ctx_max = min(任务密级上限, 出口密级上界)
-            出口含有网络出口工具 → 密级上限锁定 L0（防止外泄）
-        t_ctx_min = max(各出口所需的最低完整性)
-            出口需要写回 → T2；出口需要执行高危工具 → T3
+        c_ctx_max = min(EGRESS_READERS[tool] for tool in egress)，出口集为空 → agent.clearance
+        t_ctx_min = max(TOOL_REQUIRED_TRUST[tool] for tool in consequential)，工具集为空 → T0
+
+    `exports`（数据出口）决定 c_ctx_max，`tools`（高危处置工具）决定 t_ctx_min，
+    两轴分开推导，不再混在一起取 max。`declared_exports`/`declared_tools` 是旧命名的
+    位置参数别名，保持既有调用兼容。
     """
-    # c_ctx_max: 取所有约束的下界
-    cap = task_max_clearance
-    if declared_tools & EGRESS_TOOLS:
-        cap = Clearance(min(int(cap), int(Clearance.L0_PUBLIC)))
-    c_ctx_max = cap
+    egress = exports if exports is not None else (declared_exports or set())
+    consequential = tools if tools is not None else (declared_tools or set())
 
-    # t_ctx_min: 取所有出口要求的最高门槛
-    thresholds = [Trust.T0_UNTRUSTED]
-    for export in declared_exports:
-        req = EXPORT_TOOL_REQUIRED_TRUST.get(export, Trust.T0_UNTRUSTED)
-        thresholds.append(req)
-    for tool in declared_tools:
-        req = TOOL_REQUIRED_TRUST.get(tool, Trust.T0_UNTRUSTED)
-        thresholds.append(req)
-    t_ctx_min = Trust(max(int(t) for t in thresholds))
+    # c_ctx_max：数据出口的读者下界；出口为空 → 主体密级
+    if egress:
+        readers = [EGRESS_READERS.get(t, Clearance.L0_PUBLIC) for t in egress]
+        c_ctx_max = Clearance(min(int(r) for r in readers))
+    else:
+        c_ctx_max = agent.clearance if agent is not None else task_max_clearance
+
+    # t_ctx_min：高危处置工具的最高门槛；工具为空 → T0
+    if consequential:
+        reqs = [TOOL_REQUIRED_TRUST.get(t, Trust.T0_UNTRUSTED) for t in consequential]
+        t_ctx_min = Trust(max(int(r) for r in reqs))
+    else:
+        t_ctx_min = Trust.T0_UNTRUSTED
 
     return TaskScope(task_id=task_id, c_ctx_max=c_ctx_max,
                      t_ctx_min=t_ctx_min, ingest=default_ingest)

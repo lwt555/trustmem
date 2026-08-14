@@ -24,8 +24,10 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from core.labels import TaskScope, derive_taskscope
 from core.pdp import PDP, Decision
 from core.session import SessionStore
+from core.verdict import Verdict
 from pep.pep import PEP
 from scenarios.soc_setup import build_agents, build_topology, TASK
 
@@ -75,6 +77,7 @@ class AttackEnv:
     agents: dict
     topo: object
     store: SessionStore
+    scope: TaskScope
     decisions: list[Decision] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)
     pep: PEP = field(default_factory=PEP)
@@ -92,20 +95,30 @@ class AttackEnv:
         self.decisions.append(d)
         return d
 
-    def read(self, agent, mem, sess) -> Decision:
-        """读 + PEP 提交水位（反映真实读路径的 LOMAC 低水位）。"""
+    def read(self, agent, mem, sess, scope: TaskScope | None = None) -> Decision:
+        """读 + PEP 提交水位（反映真实读路径的 LOMAC 低水位）。
+
+        F-22：走 can_read_scoped，TaskScope/IngestMode 在攻击路径上启用。
+        """
         self.trace(f"read:{mem.chunk_id}")
-        d = self.pdp.can_read(agent, mem, sess)
+        d = self.pdp.can_read_scoped(agent, mem, sess, scope or self.scope)
         self.pep.commit(sess, d)
         return self.decide(d)
 
     def write(self, agent, sess, sensitivity, layer, input_mems, op,
-              output_text="", declassify_approved=False):
-        """写 + 返回 (decision, decay)。"""
+              output_text="", declassify_approved=False,
+              scope: TaskScope | None = None):
+        """写 + 返回 (decision, decay)。F-22：区间检查在写路径同样生效。"""
         self.trace(f"write:{layer.value}/{sensitivity.name[:2]}")
         d, decay = self.pdp.can_write(
             agent, sess, sensitivity, layer, input_mems, op,
             output_text=output_text, declassify_approved=declassify_approved)
+        eff_scope = scope or self.scope
+        if d.allowed and not (eff_scope.contains_c(sensitivity)
+                              and eff_scope.contains_t(decay.trust_out)):
+            d.verdict = Verdict.DENY
+            d.denied_by = ("TaskScope-C" if not eff_scope.contains_c(sensitivity)
+                           else "TaskScope-T")
         self.decide(d)
         return d, decay
 
@@ -129,7 +142,9 @@ def build_env(cfg: AblationConfig) -> AttackEnv:
     agents, topo = build_agents(), build_topology()
     pdp = PDP(topo, hide_enabled=cfg.hide_enabled, bypass_all=cfg.bypass_all)
     store = SessionStore()
-    return AttackEnv(cfg=cfg, pdp=pdp, agents=agents, topo=topo, store=store)
+    scope = derive_taskscope(TASK)   # 默认 LEARN、L3/T0 宽松区间
+    return AttackEnv(cfg=cfg, pdp=pdp, agents=agents, topo=topo, store=store,
+                     scope=scope)
 
 
 def _rule_name(denied_by: str) -> str:
