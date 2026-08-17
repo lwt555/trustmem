@@ -84,6 +84,7 @@ def test_roundtrip_memorylabel_to_orm_and_back():
         collab_group={"group-a", "group-b"},
         provenance_chain=["ch-000", "ch-000a"],
         lifecycle="active", epoch=3, declassified=False,
+        derived_from_consult=True,
         ttl_end=datetime.now(timezone.utc) + timedelta(days=7),
     )
     orm_row = _memlabel_to_orm(ml)
@@ -96,6 +97,7 @@ def test_roundtrip_memorylabel_to_orm_and_back():
     assert ml2.collab_group == ml.collab_group
     assert ml2.provenance_chain == ml.provenance_chain
     assert ml2.epoch == 3
+    assert ml2.derived_from_consult is True
 
 
 # ──────────────────────────────────────────────────────────

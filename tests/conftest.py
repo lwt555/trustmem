@@ -1,4 +1,7 @@
 """Pytest shared fixtures — reused across all test files."""
+import os
+os.environ.setdefault("TRUSTMEM_SCENARIO", "soc")
+
 import pytest
 from datetime import datetime, timezone, timedelta
 

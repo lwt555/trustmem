@@ -220,9 +220,14 @@ class PDP:
                             hideable=False, session_id=sess.session_id)
 
         # ② 读取模式检查（硬拒绝之后、区间判定之前）
-        if scope.ingest is IngestMode.CONSULT:
+        consult_by_mode = scope.ingest is IngestMode.CONSULT
+        consult_by_trust = mem.provenance_trust < scope.consult_below
+        if consult_by_mode or consult_by_trust:
             sess.consult(mem.chunk_id)   # 记账：I14 的唯一数据来源
-            ck.append(Check("Ingest-Mode", True, "CONSULT → 一律 HIDE（TR2）"))
+            detail = ("CONSULT → 一律 HIDE（TR2）" if consult_by_mode else
+                      f"provenance_trust {fmt(mem.provenance_trust)} < "
+                      f"consult_below {fmt(scope.consult_below)} → HIDE")
+            ck.append(Check("Ingest-Mode", True, detail))
             return Decision(Verdict.HIDE, "READ", agent.agent_id, mem.chunk_id, ck,
                             denied_by="Ingest-Mode-CONSULT", hideable=True,
                             session_id=sess.session_id)

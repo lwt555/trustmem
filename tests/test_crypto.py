@@ -312,13 +312,14 @@ class TestCryptoEngine:
         agent = AgentLabel(agent_id="analyst-1", role=Role.ANALYST,
                            clearance=Clearance.L2_SENSITIVE,
                            trust_intrinsic=Trust.T2_MEDIUM,
-                           task_domain={"task-1"}, epoch=1)
+                           task_domain={"task-1"}, collab_group={"sec"},
+                           epoch=1)
         engine.register_agent(agent)
 
         mem = MemoryLabel(chunk_id="m1", sensitivity=Clearance.L2_SENSITIVE,
                           provenance_trust=Trust.T3_HIGH, layer=Layer.CONCLUSION,
                           memory_type=MemoryType.INTEL, owner_agent="planner-1",
-                          task_binding="task-1", epoch=1)
+                          task_binding="task-1", collab_group={"sec"}, epoch=1)
 
         ct = engine.encrypt_memory("attack ioc: 1.2.3.4", mem)
         plain, reason = engine.decrypt_memory(agent, ct)

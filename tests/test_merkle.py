@@ -528,10 +528,10 @@ class TestMerkleStore:
 class TestMerkleAuditStore:
     def _decision(self, action="READ", allowed=True,
                   subject="agent-a", obj="chunk-x",
-                  session_id="sess-1", denied_by=None) -> Decision:
-        verdict = Verdict.ALLOW if allowed else (
-            Verdict.HIDE if denied_by == "BLP-SimpleSecurity" else Verdict.DENY
-        )
+                  session_id="sess-1", denied_by=None,
+                  verdict=None) -> Decision:
+        if verdict is None:
+            verdict = Verdict.ALLOW if allowed else Verdict.DENY
         return Decision(
             verdict=verdict, action=action, subject=subject, object=obj,
             session_id=session_id, denied_by=denied_by,
@@ -554,9 +554,23 @@ class TestMerkleAuditStore:
 
     def test_log_read_hide(self):
         store = MerkleAuditStore()
-        d = self._decision("READ", False, denied_by="BLP-SimpleSecurity")
+        d = self._decision("READ", False, denied_by="TaskScope-C",
+                           verdict=Verdict.HIDE)
         event = store.log(d)
         assert event.event_type == EventType.READ_HIDE
+
+    def test_log_read_deny_blp(self):
+        store = MerkleAuditStore()
+        d = self._decision("READ", False, denied_by="BLP-SimpleSecurity")
+        event = store.log(d)
+        assert event.event_type == EventType.READ_DENY
+
+    def test_log_consult(self):
+        store = MerkleAuditStore()
+        d = self._decision("READ", False, denied_by="Ingest-Mode-CONSULT",
+                           verdict=Verdict.HIDE)
+        event = store.log(d)
+        assert event.event_type == EventType.CONSULT
 
     def test_log_read_deny_ntk(self):
         store = MerkleAuditStore()

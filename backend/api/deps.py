@@ -6,6 +6,7 @@ In production these would be scoped to request; for the demo they are module-lev
 from __future__ import annotations
 
 import logging
+import os
 
 from backend.db.database import get_db
 from backend.db.store import TrustMemStore
@@ -22,7 +23,17 @@ from core.llm.stub import StubLLMBackend
 from core.agent.builder import AgentBuilder
 from core.endorser import HumanEndorser
 from core.human_gate import HumanGate
-from scenarios.soc_setup import build_agents, build_topology, TASK, GROUP_SOC
+
+# 场景按环境变量切换，默认 joint（演示机不依赖"记得设环境变量"）。
+_scenario = os.environ.get("TRUSTMEM_SCENARIO", "joint")
+if _scenario == "soc":
+    from scenarios.soc_setup import build_agents, build_topology, TASK, GROUP_SOC
+    AGENT_DISPLAY_NAME: dict[str, str] = {}
+else:
+    from scenarios.joint.setup import (
+        build_agents, build_topology,
+        JOINT_TASK as TASK, GROUP_JOINT as GROUP_SOC, AGENT_DISPLAY_NAME,
+    )
 
 _log = logging.getLogger(__name__)
 
@@ -97,6 +108,11 @@ def get_topology() -> Topology:
 
 def get_agents() -> dict:
     return _agents
+
+
+def get_display_name(agent_id: str) -> str:
+    """当前场景的显示名，无映射时回落为 agent_id。"""
+    return AGENT_DISPLAY_NAME.get(agent_id, agent_id)
 
 
 def get_pdp() -> PDP:

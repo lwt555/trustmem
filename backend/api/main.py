@@ -41,7 +41,7 @@ from .schemas import (
 from .deps import (
     get_agents, get_session_store, get_var_store,
     get_merkle_audit, get_write_pipeline, get_read_pipeline, get_db_store,
-    get_topology, get_human_gate, get_crypto,
+    get_topology, get_human_gate, get_crypto, get_display_name,
 )
 from core.labels import (
     Clearance, Trust, Layer, MemoryType, WriteOp, TaskScope, IngestMode,
@@ -198,6 +198,7 @@ def graph_http():
     for agent_id, agent in agents.items():
         node_info = {
             "agent_id": agent_id,
+            "display_name": get_display_name(agent_id),
             "role": agent.role.value,
             "clearance": fmt(agent.clearance),
             "trust": fmt(agent.trust_intrinsic),
@@ -242,6 +243,7 @@ def list_agents():
             trust=fmt(a.trust_intrinsic),
             tools=list(a.tool_scope),
             task_domain=list(a.task_domain),
+            display_name=get_display_name(a.agent_id),
         )
         for a in agents.values()
     ]

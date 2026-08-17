@@ -16,6 +16,7 @@ class AgentInfo(BaseModel):
     trust: str
     tools: list[str]
     task_domain: list[str]
+    display_name: str = ""
 
 
 # ── Write ──────────────────────────────────────────────────

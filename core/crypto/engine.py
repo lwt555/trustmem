@@ -125,8 +125,6 @@ class CryptoEngine:
         key = self._human_keys.get(clearance)
         if key is None:
             return None, f"[DENY] 未签发 L{clearance} 审查员密钥"
-        if key.epoch < 0:
-            return None, "[DENY] 审查员密钥 epoch 失效"
         if not policy_satisfied(ct.policy, key.attributes):
             return None, (f"[DENY] L{clearance} 密钥密级不足/属性不满足策略: "
                           f"{ct.policy}")
@@ -158,7 +156,9 @@ class CryptoEngine:
         (as persisted by the memory store). Returns (plaintext_bytes, audit_reason).
         """
         if ct is None:
-            return b"[stub-plaintext]", "[STUB] no ciphertext (demo mode)"
+            reason = "[DENY] 无密文（未加密存储或内容缺失），拒绝返回占位明文"
+            self._log_decrypt(agent.agent_id, "<none>", False, reason)
+            return None, reason
         if isinstance(ct, (bytes, bytearray)):
             ct = Ciphertext.from_bytes(bytes(ct))
         key = self._agent_keys.get(agent.agent_id)

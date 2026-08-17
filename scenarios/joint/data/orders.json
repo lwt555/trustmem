@@ -1,0 +1,16 @@
+[
+  {
+    "order_id": "ORD-001",
+    "commander_id": "CMD-01",
+    "order_text": "综合研判当前态势，给出风险等级",
+    "task_id": "JOINT-2026-RISKLEVEL",
+    "signature": "PLACEHOLDER"
+  },
+  {
+    "order_id": "ORD-002",
+    "commander_id": "CMD-01",
+    "order_text": "就本次外部转报撰写威胁分析报告",
+    "task_id": "JOINT-2026-THREATRPT",
+    "signature": "PLACEHOLDER"
+  }
+]

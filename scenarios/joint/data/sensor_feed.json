@@ -1,0 +1,82 @@
+[
+  {
+    "report_id": "EW-001",
+    "ts": "2026-08-16T02:14:00",
+    "sensor_type": "spectrum",
+    "sector": "Bravo",
+    "payload": {"summary": "导航信号载噪比下降 7 dB，持续 22 分钟，判定为局部干扰，导航可用性 62%"},
+    "signature": "sig-ew-001",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "EW-002",
+    "ts": "2026-08-16T02:16:00",
+    "sensor_type": "spectrum",
+    "sector": "Bravo",
+    "payload": {"summary": "干扰源方位角 117°，估算距离 41 km，信号特征为宽带噪声压制"},
+    "signature": "sig-ew-002",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "EW-003",
+    "ts": "2026-08-16T02:18:00",
+    "sensor_type": "spectrum",
+    "sector": "Charlie",
+    "payload": {"summary": "频谱正常，无异常抬升（对照样本）"},
+    "signature": "sig-ew-003",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "EW-004",
+    "ts": "2026-08-16T02:20:00",
+    "sensor_type": "spectrum",
+    "sector": "Bravo",
+    "payload": {"summary": "导航未失效，可用性持续维持在 60% 以上，无全域中断迹象"},
+    "signature": "sig-ew-004",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "RAD-001",
+    "ts": "2026-08-16T02:14:00",
+    "sensor_type": "radar",
+    "sector": "Bravo",
+    "payload": {"summary": "3 批身份未确认目标，航向稳定，速度中等，置信度 0.71"},
+    "signature": "sig-rad-001",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "RAD-002",
+    "ts": "2026-08-16T02:15:00",
+    "sensor_type": "radar",
+    "sector": "Charlie",
+    "payload": {"summary": "1 批身份未确认目标，置信度 0.55"},
+    "signature": "sig-rad-002",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "RAD-003",
+    "ts": "2026-08-16T02:16:00",
+    "sensor_type": "radar",
+    "sector": "Bravo",
+    "payload": {"summary": "2 批已识别友邻目标（对照样本）"},
+    "signature": "sig-rad-003",
+    "verified": true,
+    "sensitivity": 2
+  },
+  {
+    "report_id": "RAD-004",
+    "ts": "2026-08-16T02:20:00",
+    "sensor_type": "radar",
+    "sector": "Bravo",
+    "payload": {"summary": "近 20 分钟内未确认目标批次无显著增加，累计 3 批"},
+    "signature": "sig-rad-004",
+    "verified": true,
+    "sensitivity": 2
+  }
+]

@@ -492,51 +492,31 @@ class MerkleStore:
 # MerkleAuditStore — Pipeline adapter
 # ──────────────────────────────────────────────────────────────
 
-# Event type mapping: (action, is_allowed, denied_by) → EventType
-# INVOKE actions are handled first in _decision_to_event_type, so tool-related
-# denied_by values ("ProvenanceTrust", "ToolScope", "HumanInTheLoop") are
-# not needed here.
-_EVENT_MAP: dict[tuple[str, bool, str | None], EventType] = {
-    # ── WRITE ──
-    ("WRITE", True, None): EventType.WRITE_ALLOW,
-    ("WRITE", False, "BLP-Star"): EventType.WRITE_DENY,
-    ("WRITE", False, "Biba-Star"): EventType.WRITE_DENY,
-    ("WRITE", False, "LayerWrite"): EventType.WRITE_DENY,
-    ("WRITE", False, "Provenance-NoConsult"): EventType.WRITE_DENY,
-    ("WRITE", False, "P-T-ControlFlow"): EventType.WRITE_DENY,
-    ("WRITE", False, "NoWriteDown(BLP-Star)"): EventType.WRITE_DENY,
-    ("WRITE", False, "NoWriteDown(C-Eff-WriteDown)"): EventType.WRITE_DENY,
-    ("WRITE", False, "NoWriteDown(BLP-Star + C-Eff-WriteDown)"): EventType.WRITE_DENY,
-    ("WRITE", False, "TaskScope-C"): EventType.WRITE_DENY,
-    ("WRITE", False, "TaskScope-T"): EventType.WRITE_DENY,
-    # ── READ ──
-    ("READ", True, None): EventType.READ_ALLOW,
-    ("READ", False, "BLP-SimpleSecurity"): EventType.READ_HIDE,
-    ("READ", False, "TaskScope-C"): EventType.READ_HIDE,
-    ("READ", False, "NeedToKnow"): EventType.READ_DENY,
-    ("READ", False, "CognitiveLayer"): EventType.READ_DENY,
-    ("READ", False, "TTL"): EventType.READ_DENY,
-    ("READ", False, "Epoch"): EventType.READ_DENY,
-    ("READ", False, "Lifecycle"): EventType.READ_DENY,
-    ("READ", False, "TaskScope-T"): EventType.READ_DENY,
-    ("READ", False, "NotFound"): EventType.READ_DENY,
-}
-
-
 def _decision_to_event_type(decision: Decision) -> EventType:
     """Map a PDP Decision to the most specific Merkle EventType.
+
+    以 verdict 为准区分 HIDE / DENY：`decision.allowed` 只是 ALLOW 的别名，
+    会丢失 HIDE 与 DENY 的区别。HIDE 与 DENY 的 denied_by 集合互不相同，
+    因此只按 verdict + denied_by 判定，不再用 (action, allowed, denied_by) 三元组。
 
     未映射的裁决直接抛错（F-18）：绝不允许静默回退成 CONSULT，
     否则审计链会把未知裁决记成"查阅"，证据链不可信。
     """
     from .verdict import Verdict
     if decision.action.startswith("INVOKE"):
-        return EventType.TOOL_INVOKE if decision.allowed else EventType.TOOL_DENY
-    key = (decision.action, decision.allowed, decision.denied_by)
-    ev = _EVENT_MAP.get(key)
-    if ev is None:
-        raise ValueError(f"未映射的裁决类型: {key}，请补充 _EVENT_MAP")
-    return ev
+        return EventType.TOOL_INVOKE if decision.verdict == Verdict.ALLOW else EventType.TOOL_DENY
+    if decision.action not in ("READ", "WRITE"):
+        raise ValueError(f"未映射的裁决 action: {decision.action}")
+
+    if decision.verdict == Verdict.ALLOW:
+        return EventType.READ_ALLOW if decision.action == "READ" else EventType.WRITE_ALLOW
+    if decision.verdict == Verdict.HIDE:
+        if decision.denied_by == "Ingest-Mode-CONSULT":
+            return EventType.CONSULT
+        return EventType.READ_HIDE
+    if decision.verdict == Verdict.DENY:
+        return EventType.READ_DENY if decision.action == "READ" else EventType.WRITE_DENY
+    raise ValueError(f"未映射的 CONFIRM 裁决: {decision.action}/{decision.denied_by}")
 
 
 class MerkleAuditStore:

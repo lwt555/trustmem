@@ -55,22 +55,33 @@ def policy_from_label(mem: MemoryLabel, topo: Topology) -> str:
     lv = [f"clearance_{i}" for i in range(int(mem.sensitivity), 4)]
     clauses.append("(" + " or ".join(lv) + ")")
 
-    # need-to-know
+    # need-to-know：task 绑定
     clauses.append(f"task_{mem.task_binding}")
+
+    owner = mem.owner_agent
+    group_clause = None
     if mem.collab_group:
-        clauses.append("(" + " or ".join(f"group_{g}" for g in sorted(mem.collab_group)) + ")")
+        group_clause = "(" + " or ".join(f"group_{g}" for g in sorted(mem.collab_group)) + ")"
 
     # 认知分层 → 关系型属性
-    owner = mem.owner_agent
     if mem.layer == Layer.REASONING:
-        # 只向上：owner 自己 or owner 的上级 or Auditor
+        # 只向上：owner 自己 or owner 的上级 or Auditor；且同协作组
+        if group_clause:
+            clauses.append(group_clause)
         readers = [f"agent_{owner}", f"ancestorof_{owner}", f"role_{Role.AUDITOR.value}"]
         clauses.append("(" + " or ".join(readers) + ")")
     elif mem.layer == Layer.DIRECTIVE:
-        # 向下：owner 自己 or owner 的下级 or Auditor
+        # 向下：owner 自己 or owner 的下级 or Auditor；且同协作组
+        if group_clause:
+            clauses.append(group_clause)
         readers = [f"agent_{owner}", f"descendantof_{owner}", f"role_{Role.AUDITOR.value}"]
         clauses.append("(" + " or ".join(readers) + ")")
-    # C 层由 group + clearance 表达，无需额外子句
+    else:
+        # C 层：同协作组 or 上级 or 自己 or Auditor（与 PDP _layer_readable 对齐）
+        readers = [f"agent_{owner}", f"ancestorof_{owner}", f"role_{Role.AUDITOR.value}"]
+        if group_clause:
+            readers = [group_clause] + readers
+        clauses.append("(" + " or ".join(readers) + ")")
 
     # 版本号：权限撤销靠 epoch 递增使旧密钥失效
     clauses.append(f"epoch_{mem.epoch}")

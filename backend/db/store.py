@@ -46,6 +46,7 @@ def _memlabel_from_orm(row: MemoryChunkORM) -> MemoryLabel:
         lifecycle=row.lifecycle or "active",
         epoch=row.epoch or 1,
         declassified=bool(row.declassified),
+        derived_from_consult=bool(row.derived_from_consult),
         ttl_end=row.ttl_end,
     )
 
@@ -64,6 +65,7 @@ def _memlabel_to_orm(m: MemoryLabel) -> MemoryChunkORM:
         lifecycle=m.lifecycle,
         epoch=m.epoch,
         declassified=m.declassified,
+        derived_from_consult=m.derived_from_consult,
         ttl_end=m.ttl_end,
     )
 
@@ -101,7 +103,7 @@ class MemoryStore:
             for attr in ("sensitivity", "provenance_trust", "layer", "memory_type",
                          "owner_agent", "task_binding", "collab_group",
                          "provenance_chain", "lifecycle", "epoch", "declassified",
-                         "ttl_end"):
+                         "derived_from_consult", "ttl_end"):
                 setattr(row, attr, getattr(_memlabel_to_orm(mem), attr))
             if ciphertext is not None:
                 row.content_encrypted = ciphertext.decode("utf-8")

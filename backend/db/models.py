@@ -28,6 +28,7 @@ class MemoryChunk(Base):
     lifecycle = Column(String(12), default="active")
     epoch = Column(Integer, default=1)
     declassified = Column(Boolean, default=False)
+    derived_from_consult = Column(Boolean, default=False)   # F-29：CONSULT 派生写回标记
     content_encrypted = Column(Text, default="")            # placeholder for CP-ABE ciphertext
     ttl_end = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -146,3 +147,56 @@ class ThreatIntel(Base):
     ttp = Column(String(128), default="")
     description = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ──────────────────────────────────────────────────────────────
+# 军事场景（joint）数据表
+# ──────────────────────────────────────────────────────────────
+
+def trust_from_verified(verified: bool) -> int:
+    """由 verified 推导 trust：True → 3，False → 2。
+
+    这是"设备验签"从口播变成机制的唯一落点，所有写入路径必须经过它。
+    """
+    return 3 if verified else 2
+
+
+class SensorReport(Base):
+    """传感器直报 · 输入边界①（雷达 / 频谱装备直报）。"""
+    __tablename__ = "sensor_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(String(64), unique=True, nullable=False, index=True)  # 如 EW-001 / RAD-001
+    ts = Column(DateTime, nullable=False, index=True)
+    sensor_type = Column(String(16), nullable=False, index=True)  # spectrum / radar
+    sector = Column(String(16), default="")                       # 如 Bravo / Charlie
+    payload = Column(JSON, default=dict)                          # 各传感器类型的结构化读数
+    signature = Column(String(128), default="")                   # 设备签名串
+    verified = Column(Boolean, nullable=False, default=False)     # 验签结果
+    sensitivity = Column(Integer, nullable=False, default=1)      # 密级整数值
+    # 本字段一律由 verified 推导（True → 3，False → 2），禁止在种子数据或任何业务代码中直接赋值。
+    # 这一行是"设备验签"从口播变成机制的唯一落点。所有写入路径必须经过 trust_from_verified()。
+    trust = Column(Integer, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
+
+class RelayIntel(Base):
+    """跨域协同信道转报 · 输入边界②（外协智能体的外部情报源）。"""
+    __tablename__ = "relay_intel"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    relay_id = Column(String(64), unique=True, nullable=False, index=True)  # 如 M231
+    received_at = Column(DateTime, nullable=False, index=True)
+    channel = Column(String(32), default="")                      # 如 X-COORD-01
+    origin = Column(String(32), default="")                       # 友邻通报 / 上级下发 / 多源汇聚
+    payload = Column(Text, default="")                            # 转报正文
+    verified = Column(Boolean, nullable=False, default=False)     # 恒为 False
+    trust = Column(Integer, nullable=False, default=1)            # 恒为 1
+    # 本字段仅用于演示后的回放标注与统计，严禁出现在任何判定、分支、过滤或裁决路径上。
+    # 系统靠标签与裁决拦截攻击，不靠预先知道哪条是攻击。步骤 9 有一条针对本约束的静态检查测试。
+    is_attack = Column(Boolean, nullable=False, default=False)
+
+    def to_dict(self) -> dict:
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}

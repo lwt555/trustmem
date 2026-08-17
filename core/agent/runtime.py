@@ -238,11 +238,15 @@ class AgentRuntime:
         """从本会话已读记忆（session.reads）构造 provenance 标签。
 
         can_invoke 的 P-T-Provenance 只取 MemoryLabel.provenance_trust 与
-        derived_from_consult 两个字段，故此处用 ReadRecord 轻量重建即可。
+        derived_from_consult 两个字段。derived_from_consult 是写回时刻打在
+        源记忆上的属性（F-29），必须回源读取，不能拿「本会话是否 CONSULT 读过」
+        近似——那会混淆「读侧 CONSULT」与「写侧 CONSULT 派生」两种语义。
         """
         sess = self.memory.session
         labels: list = []
         for rec in sess.reads:
+            stored = self.memory.memory_label(rec.chunk_id)
+            consult_derived = bool(stored and stored.derived_from_consult)
             labels.append(MemoryLabel(
                 chunk_id=rec.chunk_id,
                 sensitivity=rec.sensitivity,
@@ -251,7 +255,7 @@ class AgentRuntime:
                 memory_type=MemoryType.EPISODIC,
                 owner_agent=self.agent.agent_id,
                 task_binding=sess.task_id,
-                derived_from_consult=rec.chunk_id in sess.consulted,
+                derived_from_consult=consult_derived,
             ))
         return labels
 

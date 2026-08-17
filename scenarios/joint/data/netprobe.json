@@ -1,0 +1,50 @@
+[
+  {
+    "ts": "2026-08-16T02:14:00",
+    "hostname": "NET-03",
+    "event_type": "abnormal_access",
+    "raw": "02:14–02:47 出现异常访问，源地址不在白名单，尝试 17 次",
+    "source_ip": "",
+    "dest_ip": "",
+    "user": "",
+    "outcome": "",
+    "sensitivity": 2,
+    "trust": 2
+  },
+  {
+    "ts": "2026-08-16T02:30:00",
+    "hostname": "NET-03",
+    "event_type": "auth_anomaly",
+    "raw": "认证失败 5 次后成功 1 次",
+    "source_ip": "",
+    "dest_ip": "",
+    "user": "",
+    "outcome": "",
+    "sensitivity": 2,
+    "trust": 2
+  },
+  {
+    "ts": "2026-08-16T02:40:00",
+    "hostname": "NET-07",
+    "event_type": "heartbeat",
+    "raw": "心跳正常（对照样本）",
+    "source_ip": "",
+    "dest_ip": "",
+    "user": "",
+    "outcome": "",
+    "sensitivity": 2,
+    "trust": 2
+  },
+  {
+    "ts": "2026-08-16T02:45:00",
+    "hostname": "NET-03",
+    "event_type": "config_read",
+    "raw": "非常规时段的配置读取 1 次",
+    "source_ip": "",
+    "dest_ip": "",
+    "user": "",
+    "outcome": "",
+    "sensitivity": 2,
+    "trust": 2
+  }
+]

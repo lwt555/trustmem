@@ -24,6 +24,7 @@ DANGEROUS_CAPABILITIES: frozenset[str] = frozenset({
     "firewall_block",
     "host_isolate",
     "exec_command",
+    "risk_level_publish",
 })
 
 # 系统级能力：需显式授权，未授权一律 DENY（fail-closed）。

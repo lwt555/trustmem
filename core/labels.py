@@ -155,10 +155,19 @@ TOOL_REQUIRED_TRUST: dict[str, Trust] = {
     "exec_command":  Trust.T3_HIGH,
     "firewall_block": Trust.T3_HIGH,
     "host_isolate":  Trust.T3_HIGH,
+    # 军事场景（joint）新增工具
+    "situation_query":     Trust.T1_LOW,        # 态势查询
+    "spectrum_query":      Trust.T1_LOW,        # 频谱分析
+    "xdomain_receive":     Trust.T0_UNTRUSTED,  # 跨域接收
+    "xdomain_forward":     Trust.T1_LOW,        # 跨域转发
+    # risk_level_publish 必须是 T2，不许写 T3：规划智能体读入下游 T2 结论后会话控制流水位
+    # 必然降到 T2，门槛若设 T3，正常协同时它会被自己的系统拒绝，演示第一阶段直接卡死；
+    # 设 T2 后正常链路放行、混入低可信记忆即拒，拦截效果不变。
+    "risk_level_publish":  Trust.T2_MEDIUM,     # 风险定级发布
 }
 
 # 需要人在环二次确认的工具
-TOOL_REQUIRE_HITL: set[str] = {"firewall_block", "host_isolate", "exec_command"}
+TOOL_REQUIRE_HITL: set[str] = {"firewall_block", "host_isolate", "exec_command", "risk_level_publish"}
 
 
 def fmt(v: Clearance | Trust) -> str:
@@ -203,6 +212,7 @@ class TaskScope:
     c_ctx_max: Clearance
     t_ctx_min: Trust
     ingest: IngestMode = IngestMode.LEARN
+    consult_below: Trust = Trust.T0_UNTRUSTED
     scope_hash: str = ""
     parent_hash: str = ""
 
@@ -217,6 +227,7 @@ class TaskScope:
             "c_ctx_max": int(self.c_ctx_max),
             "t_ctx_min": int(self.t_ctx_min),
             "ingest": self.ingest.value,
+            "consult_below": int(self.consult_below),
             "parent_hash": self.parent_hash,
         }, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
@@ -277,6 +288,7 @@ EGRESS_TOOLS: set[str] = {
     "answer_to_user",     # 回复用户
     "web_search",         # 网络出口
     "intel_fetch",        # 情报抓取
+    "xdomain_forward",    # 跨域转发（军事场景外协智能体的对外协同出口）
     # 旧命名别名（保持既有调用兼容，同属数据出口）
     "api.external",
     "file.write",
@@ -293,6 +305,9 @@ EGRESS_READERS: dict[str, Clearance] = {
     "external_api.call": Clearance.L1_INTERNAL,
     "file_write": Clearance.L2_SENSITIVE,
     "memory.write": Clearance.L3_SECRET,   # 写回受 can_write 的 BLP-Star / C-Eff-WriteDown 约束
+    # 信道X 是外协智能体日常使用的对外协同信道，位于本作战体系之外，按公开级处理。
+    # 这是门④的裁决依据——任何高于公开级的内容流向它即阻断。
+    "xdomain_forward": Clearance.L0_PUBLIC,
     # 旧命名别名
     "api.external": Clearance.L1_INTERNAL,
     "file.write": Clearance.L2_SENSITIVE,
@@ -310,6 +325,7 @@ def derive_taskscope(
     exports: set[str] | None = None,
     tools: set[str] | None = None,
     agent: "AgentLabel | None" = None,
+    consult_below: Trust = Trust.T0_UNTRUSTED,
 ) -> TaskScope:
     """
     从任务声明的出口与工具自动推导 TaskScope（F-22，与设计文档 §2.4 一致）。
@@ -339,4 +355,5 @@ def derive_taskscope(
         t_ctx_min = Trust.T0_UNTRUSTED
 
     return TaskScope(task_id=task_id, c_ctx_max=c_ctx_max,
-                     t_ctx_min=t_ctx_min, ingest=default_ingest)
+                     t_ctx_min=t_ctx_min, ingest=default_ingest,
+                     consult_below=consult_below)

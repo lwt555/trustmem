@@ -113,6 +113,14 @@ class MemoryProxy:
                 max_val=kwargs.get("max_val", 100))
         raise ValueError(f"Unknown constraint type: {constraint_type}")
 
+    def memory_label(self, chunk_id: str):
+        """取回已落库记忆的完整标签（含 derived_from_consult 等写回标记）。
+
+        供溯源重建使用：Session.reads 里的 ReadRecord 只保留摘要字段，
+        derived_from_consult 是写回时刻打在 MemoryLabel 上的属性，须回源读取。
+        """
+        return self._read_pipe.mem_store.get(chunk_id)
+
     def can_invoke_tool(self, tool_name: str,
                         action_fingerprint: str = "",
                         provenance=None, arg_labels=None) -> Decision:

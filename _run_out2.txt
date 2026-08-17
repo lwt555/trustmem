@@ -1,0 +1,162 @@
+======================================================================
+任务: 收到边界告警：DMZ 主机 web01.dmz.corp.internal（172.16.0.11）在今日凌晨检测到针对其 CI 服务（TeamCity，8080 端口）的漏洞利用尝试，命中 CVE-2026-63077。请研判这是否为真实的初始访问入侵，并给出处置建议。
+======================================================================
+
+>>> [planner] 进入
+<<< [planner] 结论:
+    任务分解：
+    1. 情报收集（Intel Agent）【可与日志检索并行】  
+       收集 CVE-2026-63077、TeamCity 8080 端口漏洞利用相关的外部威胁情报，明确漏洞性质、利用特征、IOC 与缓解措施。
+    
+    2. 日志检索（Log Agent）【可与情报收集并行】  
+       以告警主机 web01.dmz.corp.internal（172.16.0.11）为中心，检索边界、主机、应用侧原始日志，还原告警时间窗口内的行为。
+    
+    3. 关联研判（Analyst Agent）【依赖 Intel、Log 结果】  
+       结合情报与日志证据，研判该告警是否构成真实的初始访问入侵，并形成处置建议。
+    
+    4. 处置执行（Executor Agent）【依赖 Analyst 结果，并经 PDP 授权】  
+       根据研判结论制定具体响应方案，在 PDP 裁决通过后执行或待命执行处置动作。
+    
+    逐项委派指令：
+  [写] planner: ALLOW T=T2 (t_eff_ctl=T3) 
+
+>>> [intel] 进入
+  [intel] web_search({"query": "CVE-2026-63077 TeamCity v) -> count=1 first=CVE-2026-63077
+  [intel] web_search({"query": "TeamCity 8080 漏洞利用 CISA K) -> count=25 first=CVE-2026-20349
+  [intel] intel_fetch({"url": "https://www.cisa.gov/known-) -> count=25 first=CVE-2026-20349
+  [intel] web_search({"query": "CVE-2026-63077 JetBrains ) -> count=1 first=CVE-2026-63077
+  [intel] web_search({"query": "JetBrains TeamCity deseri) -> count=25 first=CVE-2026-20349
+  [intel] web_search({"query": "CVE-2026-63077 JetBrains ) -> count=1 first=CVE-2026-63077
+  [intel] web_search({"query": "CVE-2026-63077 TeamCity r) -> count=1 first=CVE-2026-63077
+<<< [intel] 结论:
+    # 外部威胁情报采集结果（Intel Agent）
+    
+    **数据来源**：CISA 已知被利用漏洞库（CISA KEV）—— 公开互联网情报源
+    **可信度等级**：T1（低，外部公开情报，接收方需据此调整研判可信度）
+    
+    ## 一、核心 IOC（与告警直接相关）
+    
+    | 类型 | 值 | 来源 | 关联产品 | 说明 |
+    |------|-----|------|----------|------|
+    | CVE | `CVE-2026-63077` | CISA-KEV | JetBrains TeamCity | **反序列化（Untrusted Data Deserialization）漏洞** |
+    
+    ## 二、威胁情报详情
+    
+    - **漏洞编号**：CVE-2026-63077
+  [写] intel: ALLOW T=T1 (t_eff_ctl=T1) 
+
+>>> [log] 进入
+  [log] log_query({"query": "SELECT name FROM sqlite_m) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+  [log] log_query({"query": "SELECT name FROM sqlite_m) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+  [log] log_query({"query": "SELECT * FROM logs LIMIT ) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+  [log] log_query({"query": "SELECT * FROM logs WHERE ) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+  [log] log_query({"query": "SELECT * FROM logs WHERE ) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+  [log] log_query({"query": "SELECT * FROM logs WHERE ) -> [
+ {
+  "ts": "2026-08-14 05:43:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "203.0.113.88",
+  "hostname": "fw-edge01.corp.internal",
+  "even
+  [log] log_query({"query": "SELECT * FROM logs WHERE ) -> [
+ {
+  "ts": "2026-08-14 05:13:18.634280",
+  "source_ip": "10.10.5.105",
+  "dest_ip": "10.10.2.20",
+  "hostname": "db01.corp.internal",
+  "event_type"
+<<< [log] 结论:
+    # 内部 SIEM 日志检索结果（Log Agent）
+    
+    **数据来源**：内部已验签 SIEM/日志平台（可信度 T3，内部权威数据）
+    **检索对象**：告警主机 `web01.dmz.corp.internal`（172.16.0.11），TeamCity 8080/TCP，CVE-2026-63077
+    **说明**：以下仅做原始日志证据整理，不做定性结论。
+    
+    ---
+    
+    ## 一、与告警主机 172.16.0.11 直接相关的事件（按时间线）
+    
+    | 时间戳 (UTC) | 来源 IP | 目的 IP | 日志来源/主机 | 事件类型 | 原始日志摘要 |
+    |---|---|---|---|---|---|
+    | 2026-08-11 08:13:18 | 203.0.113.42 | 172.16.0.0/24 | fw-edge01 (FortiGate) | port_scan | dst_port=80 扫描 DMZ 网段 [T1595] |
+    | 2026-08-11 08:13:18 | 203.0.113.42 | 172.16.0.0/24 | fw-edge01 (FortiGate) | port_scan | dst_port=443 扫描 DMZ 网段 [T1595] |
+  [写] log: ALLOW T=T2 (t_eff_ctl=T2) 
+
+>>> [analyst] 进入
+  [人工确认] 背书门：是否背书 analyst 的 T1 研判（升 T3）？ chunk=mem-5f2ab83145d1...
+  [人工确认] → 批准 (已送达)
+<<< [analyst] 结论:
+    ## 研判结论
+    
+    ### 1. 告警真实性判断  
+    **真实攻击**（已确认初始访问入侵，且已发生横向移动与数据窃取企图）。
+    
+    该告警不是单纯扫描或盲打，而是：
+    - 边界扫描 → 针对 TeamCity 8080 的 **CVE-2026-63077 反序列化利用成功**
+    - 攻击后 6 分钟内在 web01 上 **落地 webshell**
+    - 随后建立 **HTTPS C2 beacon**
+    - 后续出现 **提权、内网扫描、横向移动、凭证窃取、数据库批量导出、数据外传被 DLP 阻断**
+    
+    证据链完整，且外部情报与内部日志相互印证。
+    
+    ### 2. 威胁等级  
+  [写] analyst: ALLOW T=T1 (t_eff_ctl=T2) 
+  [背书门] analyst: T1 → T3 (evidence=human, 新 chunk=mem-5f2ab83145d1-up-926b2143, 原件=mem-5f2ab83145d1)
+
+>>> [executor] 进入
+  [人工确认] HITL 门：是否批准 host_isolate({"host": "172.16.0.11"})？
+  [人工确认] → 批准 (已送达)
+  [人工确认] HITL 门：是否批准 host_isolate({"host": "10.10.5.105"})？
+  [人工确认] → 批准 (已送达)
+  [executor] host_isolate({"host": "172.16.0.11"}) -> [STUB] 主机隔离未执行：无真实隔离能力，未隔离任何主机。
+  [人工确认] HITL 门：是否批准 firewall_block({"ip": "203.0.113.42"})？
+  [人工确认] → 批准 (已送达)
+  [executor] host_isolate({"host": "10.10.5.105"}) -> [STUB] 主机隔离未执行：无真实隔离能力，未隔离任何主机。
+  [人工确认] HITL 门：是否批准 firewall_block({"ip": "198.51.100.7"})？
+  [人工确认] → 批准 (已送达)
+  [executor] firewall_block({"ip": "203.0.113.42"}) -> [STUB] 防火墙封禁未执行：无真实网络设备接入，未阻断任何 IP。
+  [人工确认] HITL 门：是否批准 firewall_block({"ip": "203.0.113.88"})？
+  [人工确认] → 批准 (已送达)
+  [executor] firewall_block({"ip": "198.51.100.7"}) -> [STUB] 防火墙封禁未执行：无真实网络设备接入，未阻断任何 IP。
+  [executor] firewall_block({"ip": "203.0.113.88"}) -> [STUB] 防火墙封禁未执行：无真实网络设备接入，未阻断任何 IP。
+  [executor] file_write({"path": "/var/forensics/IR-2026-CVE) -> [STUB] 文件写入未执行：无真实落盘，未产生任何文件。
+<<< [executor] 结论:
+    ## 处置执行结果报告
+    
+    **研判依据**：Analyst 结论为「确认真实初始访问入侵」（Critical，置信度：高），已发生横向移动、提权、凭证窃取与数据外传企图。据此启动紧急处置。
+    
+    ---
+    
+    ### 一、已提交的处置动作及执行结果
+    
+    | # | 动作 | 工具 | 处理对象 | 执行结果 |

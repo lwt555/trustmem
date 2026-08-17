@@ -36,10 +36,13 @@ from core.labels import AgentLabel, Clearance, Trust, Role
 # ══════════════════════════════════════════════════════════════
 ROLES = [r.value for r in Role]
 DATA_SOURCES = ["public_internet", "user_upload", "internal_log",
-                "verified_kb", "agent_output", "human_confirm", "none"]
+                "verified_kb", "agent_output", "human_confirm", "none",
+                "cross_domain_relay"]
 OPERATIONS = ["web_search", "intel_fetch", "log_query", "asset_query",
               "file_read", "file_write", "exec_command",
-              "firewall_block", "host_isolate", "none"]
+              "firewall_block", "host_isolate", "none",
+              "situation_query", "spectrum_query", "xdomain_receive",
+              "xdomain_forward", "risk_level_publish"]
 
 # 数据来源 → 固有可信度   （阶段2 的核心查表）
 SOURCE_TRUST: dict[str, Trust] = {
@@ -50,6 +53,7 @@ SOURCE_TRUST: dict[str, Trust] = {
     "agent_output":    Trust.T2_MEDIUM,  # 仅消费其他 Agent 输出（运行时再按衰减代数细化）
     "human_confirm":   Trust.T3_HIGH,    # 有人在环显式确认
     "none":            Trust.T3_HIGH,    # 无数据输入（纯编排），继承任务基线
+    "cross_domain_relay": Trust.T1_LOW,  # 跨域协同信道转报（战时无公开互联网，外协对接的是跨域协同信道）
 }
 
 EXTRACTOR_SYSTEM_PROMPT = f"""你是一个权限属性抽取器。
@@ -164,7 +168,8 @@ class Extractor:
                       ("研判", Role.ANALYST), ("分析", Role.ANALYST),
                       ("处置执行", Role.EXECUTOR), ("执行 Agent", Role.EXECUTOR),
                       ("审计", Role.AUDITOR),
-                      ("情报采集", Role.EXTERNAL)]:
+                      ("情报采集", Role.EXTERNAL),
+                      ("跨域转报", Role.EXTERNAL)]:
             if kw in p:
                 role = r
                 break
@@ -178,6 +183,8 @@ class Extractor:
             srcs.append("human_confirm")
         if any(k in p for k in ("综合", "汇总", "下级 Agent")):
             srcs.append("agent_output")
+        if any(k in p for k in ("跨域协同信道", "跨域转报", "友邻通报", "上级下发", "多源汇聚")):
+            srcs.append("cross_domain_relay")
         srcs = srcs or ["public_internet"]
 
         ops = [o for o in OPERATIONS if o != "none" and o in p] or ["none"]
@@ -227,6 +234,9 @@ class PromptLens:
 
         # 网络出口约束：同时具备"高密级读权"和"网络出口"的 Agent 就是一条外泄通道。
         # 这是 confused-deputy 的经典形态，必须在标注阶段就掐掉。
+        # 注意：此局部 EGRESS_TOOLS 是"标注期粗粒度密级封顶"（命中即把主体压到 L0），
+        # 与 core/labels.py 里那个同名集合（运行时门④ Flow-Egress 的出口读者表）语义不同，
+        # 不要混用；xdomain_forward 只进后者，绝不进本集合，否则外协被压到 L0 就读不到内部级摘要。
         EGRESS_TOOLS = {"web_search", "intel_fetch"}
         has_egress = bool((declared_ops | set(tool_registry)) & EGRESS_TOOLS)
         egress_cap = Clearance.L0_PUBLIC if has_egress else Clearance.L3_SECRET
